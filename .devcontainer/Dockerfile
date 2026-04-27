@@ -17,7 +17,11 @@ RUN apt-get update \
         sudo \
     && rm -rf /var/lib/apt/lists/*
 
-RUN python3 -m pip install --no-cache-dir uv
+RUN python3 -m venv /opt/uv \
+    && /opt/uv/bin/pip install --no-cache-dir --upgrade pip \
+    && /opt/uv/bin/pip install --no-cache-dir uv \
+    && ln -s /opt/uv/bin/uv /usr/local/bin/uv \
+    && ln -s /opt/uv/bin/uvx /usr/local/bin/uvx
 
 RUN groupadd --gid ${USER_GID} ${USERNAME} \
     && useradd --uid ${USER_UID} --gid ${USER_GID} -m ${USERNAME} \
