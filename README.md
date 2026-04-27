@@ -7,7 +7,7 @@
 
 ### 预装内容
 
-- CUDA 12.4.1（基于 `nvidia/cuda:12.4.1-cudnn-devel-ubuntu22.04`）
+- CUDA 12.8（基于 `nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04`）
 - Python 3
 - `uv`
 - 常用构建工具（`build-essential`、`git`、`curl`）
