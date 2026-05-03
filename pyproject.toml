@@ -3,7 +3,9 @@ name = "rk3588-ai-video-codec"
 version = "0.1.0"
 description = "RK3588 VPU benchmark CLI managed by uv"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = [
+	"matplotlib>=3.9",
+]
 
 [project.scripts]
 benchmark-vpu = "rk3588_ai_video_codec.cli:main"
@@ -13,6 +15,9 @@ rk3588-ai-video-codec = "rk3588_ai_video_codec.cli:main"
 dev = [
 	"pytest>=8.3.5",
 	"ruff>=0.11.8",
+]
+docs = [
+	"zensical>=0.0.39",
 ]
 
 [tool.pytest.ini_options]
