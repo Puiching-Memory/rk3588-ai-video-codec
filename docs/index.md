@@ -19,7 +19,7 @@
 
 ```bash
 uv run benchmark-vpu --profile quick
-uv run benchmark-vpu --profile quick --quality-only --plot-charts
+uv run benchmark-vpu --profile quick --quality-only
 uv run benchmark-vpu --plot-summary results/quality-ladder-20260504
 ```
 

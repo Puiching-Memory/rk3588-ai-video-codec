@@ -16,7 +16,8 @@ bash scripts/benchmark_vpu.sh [options]
 
 - `--profile {quick,full}`：选择测试档位，默认 `full`
 - `--out-dir PATH`：指定结果输出目录，默认写入 `results/<timestamp>`
-- `--strict`：只要存在 `FAIL` 或 `UNAVAILABLE`，进程就返回非 0 退出码
+
+默认行为：只要存在 `FAIL` 或 `UNAVAILABLE`，进程就返回非 0 退出码。
 
 ## 选择 codec 范围
 
@@ -46,9 +47,9 @@ bash scripts/benchmark_vpu.sh [options]
 - `--plot-summary PATH`：读取结果目录或其中的 `summary.tsv`，生成图表后退出
 - `--plot-out-dir PATH`：自定义图表输出目录，默认是结果目录下的 `plots/`
 - `--plot-title TEXT`：覆盖图表标题
-- `--plot-charts`：在基准测试结束后自动出图
+- `--plot-charts` / `--no-plot-charts`：控制基准测试结束后是否自动出图，默认开启
 
-`--plot-summary` 与 `--plot-charts` 不能同时使用。
+`--plot-summary` 会直接读取已有结果并出图，不依赖基准测试阶段的自动绘图开关。
 
 ## 推荐命令组合
 
@@ -67,11 +68,5 @@ uv run benchmark-vpu --profile full --quality-ladder
 ### 只做扩展质量测试并自动绘图
 
 ```bash
-uv run benchmark-vpu --profile quick --quality-only --quality-extra-codecs --plot-charts
-```
-
-### 严格模式，适合 CI 或批处理
-
-```bash
-uv run benchmark-vpu --profile quick --strict
+uv run benchmark-vpu --profile quick --quality-only --quality-extra-codecs
 ```

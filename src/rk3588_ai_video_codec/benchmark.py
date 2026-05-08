@@ -69,8 +69,6 @@ class BenchmarkRunner:
         print(f"汇总文件: {context.paths.summary_tsv}")
         print(f"说明文件: {context.paths.summary_md}")
 
-        if config.strict and (
-            context.state.fail_count > 0 or context.state.unavailable_count > 0
-        ):
+        if context.state.fail_count > 0 or context.state.unavailable_count > 0:
             return 1
         return 0

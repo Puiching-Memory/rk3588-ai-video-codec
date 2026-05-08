@@ -167,7 +167,7 @@ uv run benchmark-vpu --profile full --quality-ladder
 测试结束后自动出图：
 
 ```bash
-uv run benchmark-vpu --profile quick --quality-only --plot-charts
+uv run benchmark-vpu --profile quick --quality-only
 ```
 
 ### 输出内容
@@ -177,7 +177,7 @@ uv run benchmark-vpu --profile quick --quality-only --plot-charts
 - `summary.md`：人类可读汇总，包含显式 Backend 列，当前固定为 `ffmpeg`
 - `logs/`：每一步原始日志
 - `artifacts/`：生成的测试码流样本
-- `plots/`：自动生成的码率-画质-性能-延迟图表
+- `plots/`：默认自动生成的码率-画质-性能-延迟图表，可用 `--no-plot-charts` 关闭
 
 ### 画质还原度档位
 
@@ -199,7 +199,7 @@ uv run benchmark-vpu --profile quick --quality-only --plot-charts
 
 ### 自动绘图
 
-`--plot-summary` 支持直接读取某次结果目录或其中的 `summary.tsv`，自动输出以下 PNG：
+基准测试默认会在结束后自动生成图表；`--plot-summary` 也支持直接读取某次结果目录或其中的 `summary.tsv`，单独输出以下 PNG：
 
 - `rd_performance_latency_dashboard.png`：总览看板
 - `bitrate_vs_psnr.png`：码率-PSNR 曲线
@@ -207,7 +207,7 @@ uv run benchmark-vpu --profile quick --quality-only --plot-charts
 - `bitrate_vs_fps.png`：码率-吞吐曲线
 - `bitrate_vs_latency_ms.png`：码率-单帧延迟曲线
 
-默认输出到对应结果目录下的 `plots/`，也可以通过 `--plot-out-dir` 指定其它目录。
+默认输出到对应结果目录下的 `plots/`，也可以通过 `--plot-out-dir` 指定其它目录；若只想跑基准不出图，可传 `--no-plot-charts`。
 
 图表选择规则：
 

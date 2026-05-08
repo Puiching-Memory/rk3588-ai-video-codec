@@ -25,7 +25,6 @@ class BenchmarkConfig:
     run_quality: bool = False
     run_extra_codecs: bool = True
     run_extended_quality: bool = False
-    strict: bool = False
     repo_root: Path = REPO_ROOT
 
 

@@ -27,7 +27,7 @@
 
 ## 自动生成的图表
 
-执行 `--plot-charts` 或 `--plot-summary` 后，默认会生成以下 PNG：
+执行基准测试时默认会生成以下 PNG；`--plot-summary` 也可以对已有结果单独补绘：
 
 - `rd_performance_latency_dashboard.png`
 - `bitrate_vs_psnr.png`
@@ -57,4 +57,5 @@ uv run benchmark-vpu --plot-summary results/quality-ladder-20260504/summary.tsv
 
 - 某个 codec 失败时，优先看结果目录下的 `logs/`
 - 图表没有输出时，先检查 `summary.tsv` 是否包含 `PASS` 且带有码率信息的行
+- 如需关闭自动出图，改用 `--no-plot-charts`
 - 画质指标缺失时，检查 `note` 是否包含 `psnr_avg` 与 `ssim_all`

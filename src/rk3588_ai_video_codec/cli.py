@@ -41,11 +41,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="追加 VP8/VP9/AV1 的扩展画质测试与统一图表输入",
     )
     parser.add_argument(
-        "--strict",
-        action="store_true",
-        help="若存在 FAIL 或 UNAVAILABLE，返回非 0 退出码",
-    )
-    parser.add_argument(
         "--plot-summary",
         type=Path,
         help="读取已有 summary.tsv 或结果目录并生成图表后退出",
@@ -61,8 +56,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--plot-charts",
-        action="store_true",
-        help="基准测试结束后自动生成图表",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="基准测试结束后自动生成图表，默认开启，可用 --no-plot-charts 关闭",
     )
     return parser
 
@@ -72,8 +68,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.plot_summary is not None:
-        if args.plot_charts:
-            parser.error("--plot-summary 与 --plot-charts 不能同时使用")
         try:
             output_paths = render_summary_plots(
                 args.plot_summary,
@@ -118,7 +112,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             run_quality=run_quality,
             run_extra_codecs=run_extra_codecs,
             run_extended_quality=run_extended_quality,
-            strict=args.strict,
         )
     )
     try:

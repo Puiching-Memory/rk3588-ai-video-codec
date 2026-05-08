@@ -174,6 +174,12 @@ def series_label(point: SummaryPoint, include_type: bool) -> str:
     return f"{point.codec}{backend_suffix}"
 
 
+def plot_bitrate_kbps(point: SummaryPoint) -> float | None:
+    if point.target_kbps is not None:
+        return point.target_kbps
+    return point.bitrate_kbps
+
+
 def build_series(points: list[SummaryPoint]) -> dict[str, list[SummaryPoint]]:
     include_type = len({point.result_type for point in points}) > 1
     grouped: dict[str, list[SummaryPoint]] = {}
@@ -182,7 +188,7 @@ def build_series(points: list[SummaryPoint]) -> dict[str, list[SummaryPoint]]:
         grouped.setdefault(label, []).append(point)
 
     for label in grouped:
-        grouped[label].sort(key=lambda point: point.bitrate_kbps or point.target_kbps or 0.0)
+        grouped[label].sort(key=lambda point: plot_bitrate_kbps(point) or 0.0)
     return grouped
 
 
@@ -208,7 +214,7 @@ def draw_metric(
         x_values: list[float] = []
         y_values: list[float] = []
         for point in points:
-            x_value = point.bitrate_kbps or point.target_kbps
+            x_value = plot_bitrate_kbps(point)
             y_value = getattr(point, metric_name)
             if x_value is None or y_value is None:
                 continue

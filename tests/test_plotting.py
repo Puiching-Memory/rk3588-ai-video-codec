@@ -4,6 +4,7 @@ import pytest
 
 from rk3588_ai_video_codec.plotting import (
     load_summary_points,
+    plot_bitrate_kbps,
     render_summary_plots,
     resolve_summary_path,
     select_quality_points,
@@ -76,6 +77,16 @@ def test_load_summary_points_parses_quality_metrics(tmp_path: Path) -> None:
     assert points[0].latency_ms == pytest.approx((0.637 / 120) * 1000)
     assert points[1].cpu_pct == pytest.approx(274.0)
     assert points[2].bitrate_kbps == pytest.approx(2000.0)
+
+
+def test_plot_bitrate_kbps_prefers_quality_target(tmp_path: Path) -> None:
+    summary_path = write_summary(tmp_path / "summary.tsv")
+
+    points = load_summary_points(summary_path)
+
+    assert plot_bitrate_kbps(points[0]) == pytest.approx(500.0)
+    assert plot_bitrate_kbps(points[1]) == pytest.approx(500.0)
+    assert plot_bitrate_kbps(points[2]) == pytest.approx(2000.0)
 
 
 def test_load_summary_points_defaults_backend_to_ffmpeg_when_missing(tmp_path: Path) -> None:

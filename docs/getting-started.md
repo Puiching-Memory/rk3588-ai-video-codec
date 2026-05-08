@@ -40,8 +40,10 @@ uv run benchmark-vpu --profile quick --quality-only
 ### 画质测试完成后自动出图
 
 ```bash
-uv run benchmark-vpu --profile quick --quality-only --plot-charts
+uv run benchmark-vpu --profile quick --quality-only
 ```
+
+如果只想跑基准不生成图表，可显式传入 `--no-plot-charts`。
 
 ### 对既有结果目录补绘图表
 

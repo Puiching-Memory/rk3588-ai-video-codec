@@ -1,5 +1,7 @@
 import pytest
 
+import rk3588_ai_video_codec.benchmark as benchmark_module
+from rk3588_ai_video_codec.benchmark import BenchmarkRunner
 from rk3588_ai_video_codec.cli import build_parser, main
 from rk3588_ai_video_codec.domain import (
     bitrate_to_bps,
@@ -102,10 +104,29 @@ def test_build_parser_accepts_plot_summary(tmp_path) -> None:
     assert args.plot_summary == tmp_path / "summary.tsv"
 
 
+def test_build_parser_enables_plot_charts_by_default() -> None:
+    args = build_parser().parse_args([])
+
+    assert args.plot_charts is True
+
+
+def test_build_parser_accepts_no_plot_charts() -> None:
+    args = build_parser().parse_args(["--no-plot-charts"])
+
+    assert args.plot_charts is False
+
+
 def test_build_parser_accepts_quality_extra_codecs() -> None:
     args = build_parser().parse_args(["--quality-extra-codecs"])
 
     assert args.quality_extra_codecs is True
+
+
+def test_build_parser_rejects_strict() -> None:
+    with pytest.raises(SystemExit) as error:
+        build_parser().parse_args(["--strict"])
+
+    assert error.value.code == 2
 
 
 def test_prepare_context_splits_config_paths_and_state(tmp_path) -> None:
@@ -136,3 +157,45 @@ def test_main_rejects_quality_extra_codecs_with_codec_only() -> None:
         main(["--quality-extra-codecs", "--av1-only"])
 
     assert error.value.code == 2
+
+
+def test_main_plot_summary_ignores_default_plot_charts(tmp_path, monkeypatch, capsys) -> None:
+    output_path = tmp_path / "plots" / "chart.png"
+
+    def fake_render_summary_plots(*_args, **_kwargs):
+        return [output_path]
+
+    monkeypatch.setattr("rk3588_ai_video_codec.cli.render_summary_plots", fake_render_summary_plots)
+
+    exit_code = main(["--plot-summary", str(tmp_path / "summary.tsv")])
+
+    assert exit_code == 0
+    assert str(output_path) in capsys.readouterr().out
+
+
+def test_runner_returns_nonzero_for_unavailable_by_default(tmp_path, monkeypatch) -> None:
+    runner = BenchmarkRunner(
+        BenchmarkConfig(
+            profile="quick",
+            out_dir=tmp_path / "result",
+            run_h264=False,
+            run_h265=False,
+            run_av1=True,
+            run_4k=False,
+            run_throughput=True,
+            run_quality=False,
+            run_extra_codecs=False,
+            run_extended_quality=False,
+        )
+    )
+
+    monkeypatch.setattr(BenchmarkRunner, "ensure_requirements", lambda self: None)
+    monkeypatch.setattr(benchmark_module, "write_system_info", lambda _context: None)
+    monkeypatch.setattr(benchmark_module, "render_summary_md", lambda _context: None)
+
+    def fake_run_av1_tests(context) -> None:
+        context.state.unavailable_count += 1
+
+    monkeypatch.setattr(benchmark_module, "run_av1_tests", fake_run_av1_tests)
+
+    assert runner.run() == 1
