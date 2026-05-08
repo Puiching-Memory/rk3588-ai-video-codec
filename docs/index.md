@@ -8,7 +8,7 @@
 ## 覆盖内容
 
 - H.264 / H.265 的硬编码、硬解码与往返链路
-- MJPEG、VP8、VP9、AV1 的可用性探测与扩展质量测试
+- VP8、VP9、AV1 的可用性探测与扩展质量测试
 - 统一生成 `summary.tsv`、`summary.md`、`logs/`、`artifacts/`、`plots/`
 - 基于结果目录补绘码率、画质、吞吐和延迟图表
 
@@ -43,7 +43,7 @@ uv run benchmark-vpu --plot-summary results/quality-ladder-20260504
 ## 当前边界
 
 - 当前实现统一走 FFmpeg CLI，不再包含 GStreamer backend
-- VP9 和 AV1 是否能完整跑通，取决于本机 FFmpeg 是否带有对应样本编码器和 Rockchip 解码链路
+- VP9 和 AV1 是否能完整跑通，取决于本机 FFmpeg 是否带有对应样本编码器以及 `vp9_rkmpp` / `av1_rkmpp` 解码链路
 - `--quality-extra-codecs` 默认使用精简档位，避免扩展质量测试过长
 
 !!! tip

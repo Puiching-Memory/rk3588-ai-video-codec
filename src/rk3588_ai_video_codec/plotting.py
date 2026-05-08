@@ -76,7 +76,7 @@ def infer_backend(codec: str, result_type: str, note: str, backend: str | None) 
     if result_type in {"stream-pipeline", "encode", "decode", "quality", "suite"}:
         return "ffmpeg"
 
-    if codec in {"H264", "H265", "MJPEG", "VP8", "VP9", "AV1"}:
+    if codec in {"H264", "H265", "VP8", "VP9", "AV1"}:
         return "ffmpeg"
 
     if "encoder=" in note or "decoder=" in note:

@@ -24,83 +24,6 @@ from ..reporting import write_result
 from ..runtime import BenchmarkContext
 
 
-def run_mjpeg_suite(context: BenchmarkContext) -> None:
-    codec_label = "MJPEG"
-    ffmpeg_codec = "mjpeg_rkmpp"
-    size = f"{context.settings.av1_width}x{context.settings.av1_height}"
-    rate = 30
-    frames = context.settings.av1_frames
-    case_name = format_case_name(size, rate)
-    artifact = context.paths.artifact_dir / f"mjpeg_probe_{context.config.profile}.mjpeg"
-
-    encoder_available = ffmpeg_has_codec("encoders", ffmpeg_codec)
-    decoder_available = ffmpeg_has_codec("decoders", ffmpeg_codec)
-
-    if not encoder_available:
-        write_result(
-            context,
-            "UNAVAILABLE",
-            codec_label,
-            "encode",
-            case_name,
-            size,
-            str(rate),
-            str(frames),
-            "n/a",
-            "n/a",
-            "n/a",
-            "n/a",
-            f"未发现 {ffmpeg_codec} 硬编码器",
-            backend="ffmpeg",
-        )
-
-    if not decoder_available:
-        write_result(
-            context,
-            "UNAVAILABLE",
-            codec_label,
-            "decode",
-            case_name,
-            size,
-            str(rate),
-            str(frames),
-            "n/a",
-            "n/a",
-            "n/a",
-            "n/a",
-            f"未发现 {ffmpeg_codec} 硬解码器",
-            backend="ffmpeg",
-        )
-
-    if not encoder_available:
-        return
-
-    run_ffmpeg_encode(
-        context,
-        codec_label,
-        ffmpeg_codec,
-        "mjpeg",
-        case_name,
-        size,
-        rate,
-        frames,
-        "12M",
-        artifact,
-    )
-    if decoder_available and artifact.exists():
-        run_ffmpeg_decode(
-            context,
-            codec_label,
-            ffmpeg_codec,
-            case_name,
-            size,
-            rate,
-            frames,
-            0,
-            artifact,
-        )
-
-
 def run_vp8_tests(context: BenchmarkContext) -> None:
     codec_label = "VP8"
     ffmpeg_codec = "vp8_rkmpp"
@@ -400,7 +323,6 @@ def run_vp9_tests(context: BenchmarkContext) -> None:
 
 
 def run_extra_codec_suites(context: BenchmarkContext) -> None:
-    run_mjpeg_suite(context)
     run_vp8_tests(context)
     run_vp9_tests(context)
 
@@ -410,24 +332,6 @@ def run_av1_tests(context: BenchmarkContext) -> None:
     rate = 30
     case_name = format_case_name(size, rate)
     sample = context.paths.artifact_dir / f"av1_probe_{context.config.profile}.webm"
-
-    if not ffmpeg_has_codec("encoders", "av1_rkmpp"):
-        write_result(
-            context,
-            "UNAVAILABLE",
-            "AV1",
-            "encode",
-            case_name,
-            size,
-            str(rate),
-            str(context.settings.av1_frames),
-            "n/a",
-            "n/a",
-            "n/a",
-            "n/a",
-            "未发现可用的 AV1 硬编码器",
-            backend="ffmpeg",
-        )
     run_generated_decode_probe(
         context,
         "AV1",

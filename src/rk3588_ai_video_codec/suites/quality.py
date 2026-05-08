@@ -21,7 +21,6 @@ from ..ffmpeg_backend import (
     first_available_ffmpeg_codec,
     log_matches_unavailable,
 )
-from ..operations import run_ffmpeg_quality
 from ..process import calc_cpu_pct, calc_fps, calc_realtime, format_float, timed_run
 from ..reporting import write_result
 from ..runtime import BenchmarkContext
@@ -332,22 +331,6 @@ def run_generated_quality_probe(
         str(artifact),
         backend="ffmpeg",
     )
-
-
-def run_mjpeg_quality_suite(context: BenchmarkContext) -> None:
-    for case in build_extra_quality_cases("MJPEG"):
-        artifact = context.paths.artifact_dir / f"mjpeg_quality_{case.case_name}.mjpeg"
-        run_ffmpeg_quality(
-            context,
-            "MJPEG",
-            "mjpeg_rkmpp",
-            "mjpeg",
-            case,
-            min(context.settings.quality_frames, 60),
-            artifact,
-        )
-
-
 def run_vp8_quality_suite(context: BenchmarkContext) -> None:
     frames = min(context.settings.quality_frames, 60)
     for case in build_extra_quality_cases("VP8"):
@@ -401,7 +384,6 @@ def run_av1_quality_suite(context: BenchmarkContext) -> None:
 
 
 def run_extended_quality_suites(context: BenchmarkContext) -> None:
-    run_mjpeg_quality_suite(context)
     run_vp8_quality_suite(context)
     run_vp9_quality_suite(context)
     run_av1_quality_suite(context)

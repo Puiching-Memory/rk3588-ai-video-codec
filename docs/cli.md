@@ -31,7 +31,7 @@ bash scripts/benchmark_vpu.sh [options]
 
 - `--quality-ladder`：在吞吐测试之外，追加 H.264 / H.265 的质量阶梯测试
 - `--quality-only`：只跑画质还原度测试，不执行常规吞吐和 AV1 探测
-- `--quality-extra-codecs`：追加 MJPEG、VP8、VP9、AV1 的扩展质量测试
+- `--quality-extra-codecs`：追加 VP8、VP9、AV1 的扩展质量测试
 
 默认质量阶梯会覆盖以下目标码率：
 

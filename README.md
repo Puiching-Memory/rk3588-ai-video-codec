@@ -103,13 +103,10 @@ uv run --group docs zensical build
 - H.265 硬编码：`hevc_rkmpp`
 - H.265 硬解码：`hevc_rkmpp`
 - H.265 编解码往返测试：`hevc_rkmpp -> hevc_rkmpp`
-- MJPEG 硬编码：`mjpeg_rkmpp`
-- MJPEG 硬解码：`mjpeg_rkmpp`
 - VP8 FFmpeg 样本编码：优先尝试 `vp8_rkmpp`，否则回退到 `vp8_v4l2m2m`
 - VP8 硬解码：`vp8_rkmpp`
-- VP9 硬解码探测：FFmpeg 样本生成 + `vp9_rkmpp`
-- AV1 硬编码可用性检查：`av1_rkmpp`
-- AV1 硬解码探测：FFmpeg 样本生成 + `av1_rkmpp`
+- VP9 FFmpeg 样本生成 + `vp9_rkmpp` 硬解码探测
+- AV1 FFmpeg 样本生成 + `av1_rkmpp` 硬解码探测
 
 ### 执行方式
 
@@ -125,11 +122,11 @@ uv run benchmark-vpu --profile full
 uv run benchmark-vpu --profile quick
 ```
 
-说明：默认吞吐测试会额外包含 MJPEG、VP8、VP9 的探测；如果使用 `--h264-only`、`--h265-only` 或 `--av1-only`，则不会附带这些额外 codec。
+说明：默认吞吐测试会覆盖 AV1、VP8、VP9 的探测；如果使用 `--h264-only`、`--h265-only` 或 `--av1-only`，则不会附带这些额外 codec。
 
-说明：VP9 和 AV1 当前是否能真正跑通，取决于这台机器上的 FFmpeg 是否同时包含可用于样本生成的编码器；如果缺失，结果会明确标记为 `UNAVAILABLE`，而不会回退到 GStreamer。
+说明：依据 ffmpeg-rockchip README，`vp9_rkmpp` 与 `av1_rkmpp` 当前作为 Rockchip 硬解码链路使用；脚本会先用本机 FFmpeg 可用编码器生成样本，再执行对应硬解码探测。若样本生成器或硬解码链路缺失，结果会明确标记为 `UNAVAILABLE`，而不会回退到 GStreamer。
 
-`--quality-extra-codecs` 会追加 MJPEG、VP8、VP9、AV1 的扩展画质测试。为控制运行时长，这组扩展画质默认采用精简档位：MJPEG/VP8/VP9 使用 360p、480p、720p 三档，AV1 使用 360p、720p 两档。
+`--quality-extra-codecs` 会追加 VP8、VP9、AV1 的扩展画质测试。为控制运行时长，这组扩展画质默认采用精简档位：VP8/VP9 使用 360p、480p、720p 三档，AV1 使用 360p、720p 两档。
 
 画质还原度测试：
 
@@ -137,7 +134,7 @@ uv run benchmark-vpu --profile quick
 uv run benchmark-vpu --profile quick --quality-only
 ```
 
-追加 MJPEG/VP8/VP9/AV1 扩展画质测试：
+追加 VP8/VP9/AV1 扩展画质测试：
 
 ```bash
 uv run benchmark-vpu --profile quick --quality-only --quality-extra-codecs
@@ -196,9 +193,8 @@ uv run benchmark-vpu --profile quick --quality-only --plot-charts
 
 扩展画质测试的实现方式：
 
-- MJPEG：`mjpeg_rkmpp` 硬编码 + `mjpeg_rkmpp` 硬解码
 - VP8：FFmpeg 样本编码器 `vp8_rkmpp` / `vp8_v4l2m2m` + `vp8_rkmpp` 硬解码
-- VP9：FFmpeg 样本编码器（如 `libvpx-vp9`）+ `vp9_rkmpp` 硬解码
+- VP9：FFmpeg 样本编码器（如 `vp9_rkmpp`、`libvpx-vp9`、`vp9_v4l2m2m`）+ `vp9_rkmpp` 硬解码
 - AV1：FFmpeg 样本编码器（如 `av1_rkmpp`、`libsvtav1`、`librav1e`、`libaom-av1`）+ `av1_rkmpp` 硬解码
 
 ### 自动绘图
@@ -216,7 +212,7 @@ uv run benchmark-vpu --profile quick --quality-only --plot-charts
 图表选择规则：
 
 - PSNR/SSIM 图只使用 `quality` 结果
-- FPS/Latency 图会合并 `quality` 与普通吞吐结果，因此 MJPEG、VP8、VP9 即使只做了部分质量档位，也会进入同一套性能/延迟图
+- FPS/Latency 图会合并 `quality` 与普通吞吐结果，因此 VP8、VP9、AV1 即使只做了部分质量档位，也会进入同一套性能/延迟图
 
 ### 说明
 

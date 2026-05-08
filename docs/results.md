@@ -14,7 +14,7 @@
 ## `summary.tsv` 关键字段
 
 - `status`：`PASS`、`FAIL` 或 `UNAVAILABLE`
-- `codec`：H264、H265、MJPEG、VP8、VP9、AV1 等
+- `codec`：H264、H265、VP8、VP9、AV1 等
 - `type`：例如 `encode`、`decode`、`quality`
 - `backend`：当前实现固定为 `ffmpeg`
 - `case`：用例名，如 `360p30_500kbps`

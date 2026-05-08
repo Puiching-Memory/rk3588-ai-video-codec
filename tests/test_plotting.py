@@ -29,8 +29,8 @@ SAMPLE_SUMMARY = "\n".join(
             "ssim_db=15.131044\t/tmp/h264.h264"
         ),
         (
-            "PASS\tMJPEG\tencode\tffmpeg\t360p30\t640x360\t30\t30\t0.100\t300.0\t10.00\t"
-            "120%\tavg_mbps=4.50\t/tmp/mjpeg.mjpeg"
+            "PASS\tVP9\tdecode\tffmpeg\t360p30\t640x360\t30\t30\t0.200\t150.0\t5.00\t"
+            "80%\tsample_encoder=libvpx-vp9 decoder=vp9_rkmpp avg_mbps=2.00\t/tmp/vp9.webm"
         ),
     ]
 ) + "\n"
@@ -42,8 +42,8 @@ MISSING_BACKEND_SUMMARY = "\n".join(
             "realtime\tcpu\tnote\tartifact"
         ),
         (
-            "PASS\tVP9\tdecode\t\t360p30\t640x360\t30\t30\t0.200\t150.0\t5.00\t80%\t"
-            "sample_encoder=libvpx-vp9 decoder=vp9_rkmpp\t/tmp/vp9.webm"
+            "PASS\tAV1\tdecode\t\t360p30\t640x360\t30\t30\t0.200\t150.0\t5.00\t80%\t"
+            "sample_encoder=libaom-av1 decoder=av1_rkmpp\t/tmp/av1.webm"
         ),
     ]
 ) + "\n"
@@ -75,7 +75,7 @@ def test_load_summary_points_parses_quality_metrics(tmp_path: Path) -> None:
     assert points[0].psnr_avg == pytest.approx(39.213216)
     assert points[0].latency_ms == pytest.approx((0.637 / 120) * 1000)
     assert points[1].cpu_pct == pytest.approx(274.0)
-    assert points[2].bitrate_kbps == pytest.approx(4500.0)
+    assert points[2].bitrate_kbps == pytest.approx(2000.0)
 
 
 def test_load_summary_points_defaults_backend_to_ffmpeg_when_missing(tmp_path: Path) -> None:
@@ -94,7 +94,7 @@ def test_select_runtime_points_keeps_non_quality_series(tmp_path: Path) -> None:
     points = load_summary_points(summary_path)
 
     assert [point.codec for point in select_quality_points(points)] == ["H265", "H264"]
-    assert [point.codec for point in select_runtime_points(points)] == ["H265", "H264", "MJPEG"]
+    assert [point.codec for point in select_runtime_points(points)] == ["H265", "H264", "VP9"]
 
 
 def test_render_summary_plots_smoke(tmp_path: Path) -> None:

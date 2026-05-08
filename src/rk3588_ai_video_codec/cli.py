@@ -38,7 +38,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--quality-extra-codecs",
         action="store_true",
-        help="追加 MJPEG/VP8/VP9/AV1 的扩展画质测试与统一图表输入",
+        help="追加 VP8/VP9/AV1 的扩展画质测试与统一图表输入",
     )
     parser.add_argument(
         "--strict",

@@ -71,4 +71,4 @@ uv run --group docs zensical build
 
 !!! note
 
-    当目标机器上的 VP9 或 AV1 编码器不可用时，结果会明确标记为 `UNAVAILABLE`，而不是静默回退到其它 backend。
+    根据 ffmpeg-rockchip README，VP9 和 AV1 这里走的是 `vp9_rkmpp`、`av1_rkmpp` 硬解码链路；如果样本编码器或硬解码链路不可用，结果会明确标记为 `UNAVAILABLE`，而不是静默回退到其它 backend。
