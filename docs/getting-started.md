@@ -9,6 +9,30 @@
 
 项目会优先尝试 `/usr/local/ffmpeg-rockchip/bin/ffmpeg` 与 `/usr/local/ffmpeg-rockchip/bin/ffprobe`；若不存在，则回退到系统 PATH 中的同名命令。
 
+## 使用开发容器
+
+仓库提供了 `.devcontainer`，适合在 Windows 的 WSL2 + Docker Desktop 环境中直接通过 VS Code Dev Containers 打开。
+
+使用前提：
+
+- Windows 已启用 WSL2
+- Docker Desktop 已开启 WSL 集成
+- 若要使用 CUDA 容器能力，主机需具备可用的 NVIDIA GPU 容器支持
+
+容器内已预装以下基础环境：
+
+- CUDA 12.8（基于 `nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04`）
+- Python 3
+- `uv`
+- 常用构建工具（`build-essential`、`git`、`curl`）
+
+打开方式：
+
+1. 在 VS Code 中安装 Dev Containers 扩展。
+2. 打开本仓库。
+3. 执行 `Dev Containers: Reopen in Container`。
+4. 容器启动后，可用 `uv --version` 和 `python3 --version` 验证环境。
+
 ## 初始化 Python 环境
 
 ```bash
@@ -31,16 +55,16 @@ uv run benchmark-vpu --profile quick
 
 ## 常见工作流
 
-### 仅做画质测试
+### 追加统一画质测试
 
 ```bash
-uv run benchmark-vpu --profile quick --quality-only
+uv run benchmark-vpu --profile quick --quality-ladder
 ```
 
 ### 画质测试完成后自动出图
 
 ```bash
-uv run benchmark-vpu --profile quick --quality-only
+uv run benchmark-vpu --profile quick --quality-ladder
 ```
 
 如果只想跑基准不生成图表，可显式传入 `--no-plot-charts`。

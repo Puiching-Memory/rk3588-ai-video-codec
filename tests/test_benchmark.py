@@ -1,4 +1,5 @@
 import pytest
+from types import SimpleNamespace
 
 import rk3588_ai_video_codec.benchmark as benchmark_module
 from rk3588_ai_video_codec.benchmark import BenchmarkRunner
@@ -91,11 +92,11 @@ def test_bitrate_to_units() -> None:
     assert bitrate_to_bps("1500k") == 1_500_000
 
 
-def test_build_parser_accepts_quality_only() -> None:
-    args = build_parser().parse_args(["--quality-only", "--h264-only"])
+def test_build_parser_rejects_quality_only() -> None:
+    with pytest.raises(SystemExit) as error:
+        build_parser().parse_args(["--quality-only"])
 
-    assert args.quality_only is True
-    assert args.h264_only is True
+    assert error.value.code == 2
 
 
 def test_build_parser_accepts_plot_summary(tmp_path) -> None:
@@ -116,10 +117,11 @@ def test_build_parser_accepts_no_plot_charts() -> None:
     assert args.plot_charts is False
 
 
-def test_build_parser_accepts_quality_extra_codecs() -> None:
-    args = build_parser().parse_args(["--quality-extra-codecs"])
+def test_build_parser_rejects_quality_extra_codecs() -> None:
+    with pytest.raises(SystemExit) as error:
+        build_parser().parse_args(["--quality-extra-codecs"])
 
-    assert args.quality_extra_codecs is True
+    assert error.value.code == 2
 
 
 def test_build_parser_rejects_strict() -> None:
@@ -147,16 +149,54 @@ def test_prepare_context_splits_config_paths_and_state(tmp_path) -> None:
 
 def test_main_rejects_quality_with_av1_only() -> None:
     with pytest.raises(SystemExit) as error:
-        main(["--quality-only", "--av1-only"])
+        main(["--quality-ladder", "--av1-only"])
 
     assert error.value.code == 2
 
 
-def test_main_rejects_quality_extra_codecs_with_codec_only() -> None:
-    with pytest.raises(SystemExit) as error:
-        main(["--quality-extra-codecs", "--av1-only"])
+def test_main_quality_ladder_enables_extended_quality(monkeypatch) -> None:
+    captured = {}
 
-    assert error.value.code == 2
+    class FakeRunner:
+        def __init__(self, config):
+            captured["config"] = config
+            self.context = SimpleNamespace(
+                paths=SimpleNamespace(summary_tsv="ignored-summary.tsv")
+            )
+
+        def run(self) -> int:
+            return 0
+
+    monkeypatch.setattr("rk3588_ai_video_codec.cli.BenchmarkRunner", FakeRunner)
+
+    exit_code = main(["--quality-ladder", "--no-plot-charts"])
+
+    assert exit_code == 0
+    assert captured["config"].run_quality is True
+    assert captured["config"].run_extended_quality is True
+    assert captured["config"].run_throughput is True
+
+
+def test_main_quality_ladder_skips_extended_quality_for_codec_only(monkeypatch) -> None:
+    captured = {}
+
+    class FakeRunner:
+        def __init__(self, config):
+            captured["config"] = config
+            self.context = SimpleNamespace(
+                paths=SimpleNamespace(summary_tsv="ignored-summary.tsv")
+            )
+
+        def run(self) -> int:
+            return 0
+
+    monkeypatch.setattr("rk3588_ai_video_codec.cli.BenchmarkRunner", FakeRunner)
+
+    exit_code = main(["--quality-ladder", "--h264-only", "--no-plot-charts"])
+
+    assert exit_code == 0
+    assert captured["config"].run_quality is True
+    assert captured["config"].run_extended_quality is False
 
 
 def test_main_plot_summary_ignores_default_plot_charts(tmp_path, monkeypatch, capsys) -> None:

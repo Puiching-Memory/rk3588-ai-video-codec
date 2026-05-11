@@ -28,17 +28,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--quality-ladder",
         action="store_true",
-        help="追加 360p/480p/720p/1080p 目标码率的 PSNR/SSIM 画质还原度测试",
-    )
-    parser.add_argument(
-        "--quality-only",
-        action="store_true",
-        help="仅运行画质还原度测试，不执行吞吐和 AV1 探测",
-    )
-    parser.add_argument(
-        "--quality-extra-codecs",
-        action="store_true",
-        help="追加 VP8/VP9/AV1 的扩展画质测试与统一图表输入",
+        help=(
+            "追加统一画质测试；默认覆盖 H.264/H.265 质量阶梯，"
+            "未指定 codec-only 时还会追加 VP8/VP9/AV1 扩展画质测试"
+        ),
     )
     parser.add_argument(
         "--plot-summary",
@@ -91,14 +84,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     elif args.av1_only:
         run_h264, run_h265, run_av1 = False, False, True
 
-    run_quality = args.quality_ladder or args.quality_only
-    run_throughput = not args.quality_only
+    codec_only_selected = args.h264_only or args.h265_only or args.av1_only
+    run_quality = args.quality_ladder
+    run_throughput = True
     run_extra_codecs = run_throughput and not (args.h264_only or args.h265_only or args.av1_only)
-    run_extended_quality = args.quality_extra_codecs
+    run_extended_quality = args.quality_ladder and not codec_only_selected
     if run_quality and not (run_h264 or run_h265):
-        parser.error("画质还原度测试仅支持 H.264/H.265，请勿与 --av1-only 组合")
-    if run_extended_quality and (args.h264_only or args.h265_only or args.av1_only):
-        parser.error("--quality-extra-codecs 不能与 --h264-only/--h265-only/--av1-only 组合")
+        parser.error("当前画质测试不支持与 --av1-only 组合")
 
     runner = BenchmarkRunner(
         BenchmarkConfig(
