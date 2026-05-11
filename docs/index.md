@@ -39,6 +39,7 @@ uv run benchmark-vpu --plot-summary results/quality-ladder-20260504
 - [CLI 参考](cli.md)：参数说明与推荐组合
 - [结果与图表](results.md)：输出目录、关键字段和绘图入口
 - [开发说明](development.md)：代码结构、测试和文档维护方式
+- [AI 视频编解码时间线](ai-video-codec-timeline.md)：神经网络视频压缩领域的关键里程碑与发展脉络
 
 ## 当前边界
 

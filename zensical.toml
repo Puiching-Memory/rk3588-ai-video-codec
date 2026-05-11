@@ -12,6 +12,7 @@ nav = [
     { "开始使用" = "getting-started.md" },
     { "CLI 参考" = "cli.md" },
     { "结果与图表" = "results.md" },
+    { "AI 视频编解码时间线" = "ai-video-codec-timeline.md" },
     { "开发说明" = "development.md" },
 ]
 extra_css = ["stylesheets/extra.css"]
