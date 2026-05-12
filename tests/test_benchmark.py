@@ -1,5 +1,6 @@
-import pytest
 from types import SimpleNamespace
+
+import pytest
 
 import rk3588_ai_video_codec.benchmark as benchmark_module
 from rk3588_ai_video_codec.benchmark import BenchmarkRunner

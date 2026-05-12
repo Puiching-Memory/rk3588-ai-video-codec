@@ -16,7 +16,6 @@ from ..ffmpeg_backend import (
 )
 from ..operations import (
     run_ffmpeg_decode,
-    run_ffmpeg_encode,
     run_ffmpeg_generated_encode_to_file,
 )
 from ..process import calc_cpu_pct, calc_fps, calc_realtime, format_float, timed_run
