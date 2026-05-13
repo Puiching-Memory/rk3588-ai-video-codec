@@ -23,7 +23,9 @@ jobs:
       - name: Build ffmpeg-rockchip
         run: |
           cd third_party/ffmpeg-rockchip
-          ./configure --disable-everything --disable-doc --disable-programs
+          ./configure --disable-doc --disable-programs --disable-x86asm \
+            --disable-avdevice --disable-avfilter --disable-postproc \
+            --disable-swresample --disable-network
           make -j$(nproc)
 
       - name: Build and package
