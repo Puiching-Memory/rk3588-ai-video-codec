@@ -1,9 +1,28 @@
-.venv/
-__pycache__/
-*.pyc
-.pytest_cache/
-.ruff_cache/
+# Build
+build/
+*.o
+*.a
+*.so
+*.so.*
+*.dylib
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+compile_commands.json
+
+# Bench results
 results/
-.scratch/
-site/
+bench_results/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*~
+
+# Misc
 .cache/
+.scratch/

@@ -1,80 +1,121 @@
 # rk3588-ai-video-codec
-面向 RK3588 的 FFmpeg VPU 基准 CLI，聚焦硬件编解码吞吐、画质还原度和结果可视化。
 
-主入口是 `uv run benchmark-vpu`，源码位于 `src/rk3588_ai_video_codec/`。`scripts/benchmark_vpu.sh` 仍保留为兼容包装层。当前实现统一走 FFmpeg CLI，不再包含 GStreamer backend。
+面向 RK3588 的 H.265 硬件视频编解码 C 库及基准测试工具，基于 [ffmpeg-rockchip](https://github.com/nyanmisaka/ffmpeg-rockchip) 的 RKMPP 硬件加速。
 
-## 快速开始
+## 功能
 
-安装依赖：
+- **H.265 硬件编码** — RKMPP 加速，支持 8K 分辨率，异步编码
+- **H.265 硬件解码** — RKMPP 加速，支持 8K 10-bit 解码
+- **离线处理** — 文件输入/输出，自动 muxer/demuxer
+- **实时流式处理** — 帧级 push/pull API，适合监控/推流场景
+- **零拷贝 DMA** — 硬件帧在 VPU 和 RGA 之间零拷贝传递
 
-```bash
-uv sync --dev
-```
+## 性能 (RK3588, 1080p)
 
-执行一次快速冒烟：
+| 测试类型   | 帧率     | 实时倍率 |
+| ---------- | -------- | -------- |
+| H.265 编码 | ~290 fps | ~9.6x    |
+| H.265 解码 | ~270 fps | ~9.0x    |
+| 流式编码   | ~215 fps | ~7.2x    |
 
-```bash
-uv run benchmark-vpu --profile quick
-```
-
-追加 100 kbps 单档位画质测试：
-
-```bash
-uv run benchmark-vpu --profile quick --quality-ladder
-```
-
-对已有结果目录补绘图表与左右预览：
+## 快速开始 (C 库)
 
 ```bash
-uv run benchmark-vpu --plot-summary results/<run-dir>
+mkdir build && cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release
+make -j$(nproc)
+
+# 运行基准测试
+./rkvc_bench --quick
+
+# 安装
+cmake --install . --prefix /usr/local
 ```
 
-## RK3588 VPU 编解码能力矩阵
+### 依赖
 
-基准工具依赖 ffmpeg-rockchip（`--enable-rkmpp`），底层通过 RK MPP 调用 VPU 硬件。各编码器的硬加速支持如下：
+- Rockchip BSP 内核 (5.10 或 6.1)
+- [ffmpeg-rockchip](https://github.com/nyanmisaka/ffmpeg-rockchip) (`/usr/local/ffmpeg-rockchip`)
+- libdrm-dev
+- CMake >= 3.16
 
-| 格式  | 硬编码          | 硬解码          | 备注                                          |
-| ----- | --------------- | --------------- | --------------------------------------------- |
-| H264  | `h264_rkmpp` ✅  | `h264_rkmpp` ✅  | 编解码均走 RKMPP                              |
-| H265  | `hevc_rkmpp` ✅  | `hevc_rkmpp` ✅  | 编解码均走 RKMPP                              |
-| MJPEG | `mjpeg_rkmpp` ✅ | `mjpeg_rkmpp` ✅ | 编解码均走 RKMPP                              |
-| VP8   | ❌               | `vp8_rkmpp` ✅   | 仅解码；编码器 `vp8_v4l2m2m` 需 V4L2 设备节点 |
-| VP9   | ❌               | `vp9_rkmpp` ✅   | 仅解码；RK3588 VPU 无硬编码支持               |
-| AV1   | ❌               | `av1_rkmpp` ✅   | 仅解码；RK3588 VPU 无硬编码支持               |
-
-> 无硬编码支持的格式（VP8/VP9/AV1）需要通过软件编码器（`libvpx-vp9`、`libsvtav1` 等）生成测试样本，当前 ffmpeg-rockchip 构建未包含这些软件编码器，因此相关测试标记为 `UNAVAILABLE`。如需测试解码性能，可提供预录样本文件。
-
-## 文档
-
-主 README 只保留项目概览与快速入口，详细说明统一放到文档站源文件中：
-
-- [docs/index.md](docs/index.md)：项目概览与文档导航
-- [docs/getting-started.md](docs/getting-started.md)：环境要求、开发容器和首次运行
-- [docs/cli.md](docs/cli.md)：CLI 参数、推荐命令组合和 100 kbps 画质档位
-- [docs/results.md](docs/results.md)：结果目录结构、字段说明和绘图规则
-- [docs/development.md](docs/development.md)：代码结构、测试、CI 和文档维护
-
-本地预览文档站：
+### 设备权限
 
 ```bash
-uv sync --dev --group docs
-uv run --group docs zensical serve
+sudo chmod 666 /dev/mpp_service /dev/dma_heap /dev/rga
+sudo chmod 666 /dev/dri/*
 ```
 
-构建静态站点：
+## C API 用法示例
+
+```c
+#include "rkvc/rkvc.h"
+
+rkvc_init();
+
+// 编码
+rkvc_encoder *enc = NULL;
+rkvc_encoder_config cfg = rkvc_encoder_config_defaults();
+cfg.width = 1920; cfg.height = 1080;
+cfg.bitrate = 4000000;
+rkvc_encoder_open_file(&enc, &cfg, "output.h265");
+
+rkvc_frame *f = NULL;
+rkvc_frame_alloc(&f, 1920, 1080, RKVC_PIX_FMT_NV12);
+// 填充 NV12 像素数据到 f ...
+rkvc_encoder_send_frame(enc, f);
+rkvc_frame_unref(f);
+rkvc_encoder_close(enc);
+
+// 解码
+rkvc_decoder *dec = NULL;
+rkvc_decoder_open_file(&dec, &rkvc_decoder_config_defaults(), "output.h265");
+rkvc_frame *frame = NULL;
+while (rkvc_decoder_read_packet(dec) == RKVC_OK)
+    while (rkvc_decoder_receive_frame(dec, &frame) == RKVC_OK)
+        rkvc_frame_unref(frame);
+rkvc_decoder_close(dec);
+
+rkvc_deinit();
+```
+
+### 项目结构
+
+```
+include/rkvc/         # 公共 API 头文件
+    rkvc.h            # 主入口 (包含所有子头文件)
+    types.h           # 错误码、像素格式、配置
+    frame.h           # 帧管理
+    encoder.h         # H.265 编码器
+    decoder.h         # H.265 解码器
+    stream.h          # 实时流式处理
+lib/                  # 库实现
+bench/                # 基准测试工具
+examples/             # 示例程序 (encode_file, decode_file, transcode, stream_*)
+```
+
+## 基准测试
 
 ```bash
-uv run --group docs zensical build
+cd build
+./rkvc_bench --quick          # 快速测试 (120 帧)
+./rkvc_bench                  # 完整测试 (300 帧)
+./rkvc_bench --4k             # 4K 测试
+./rkvc_bench --stream         # 包含流式 API 测试
+./rkvc_bench --encode-only    # 仅编码测试
+./rkvc_bench -o results/run1  # 指定输出目录
 ```
 
-## 开发检查
+### 编码能力矩阵
 
-```bash
-uv run ruff check .
-uv run pytest
-```
-
-CI 会执行同一套基础检查，并额外验证文档站构建链路。
+| 格式  | 硬编码          | 硬解码          | 备注             |
+| ----- | --------------- | --------------- | ---------------- |
+| H264  | `h264_rkmpp` ✅  | `h264_rkmpp` ✅  | 编解码均走 RKMPP |
+| H265  | `hevc_rkmpp` ✅  | `hevc_rkmpp` ✅  | 编解码均走 RKMPP |
+| MJPEG | `mjpeg_rkmpp` ✅ | `mjpeg_rkmpp` ✅ | 编解码均走 RKMPP |
+| VP8   | ❌               | `vp8_rkmpp` ✅   | 仅解码           |
+| VP9   | ❌               | `vp9_rkmpp` ✅   | 仅解码           |
+| AV1   | ❌               | `av1_rkmpp` ✅   | 仅解码           |
 
 ## 致谢
 
