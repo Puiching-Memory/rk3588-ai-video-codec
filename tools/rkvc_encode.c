@@ -1,10 +1,13 @@
 /**
  * @file rkvc_encode.c
- * @brief 命令行 H.265 编码工具。
+ * @brief 命令行 H.265 编码工具，支持文件/stdin/管道。
  *
  * 用法:
- *   rkvc_encode -i input.nv12 -o output.h265 -s 1920x1080 -r 30 -b 4M
- *   rkvc_encode -o output.h265 --testsrc -s 1920x1080 -n 300
+ *   rkvc_encode -i input.nv12 -o output.h265 -s 1920x1080
+ *   rkvc_encode --testsrc -o output.h265 -n 300
+ *   cat input.nv12 | rkvc_encode --stdin -o output.h265 -s 1920x1080
+ *   rkvc_encode --stdin --stdout -s 1920x1080 < in.nv12 > out.h265
+ *   rkvc_encode --stdin --stdout -s 1920x1080 | rkvc_decode --stdin -o out.nv12
  */
 
 #include "rkvc/rkvc.h"
@@ -12,6 +15,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <getopt.h>
+#include <time.h>
 
 static void usage(void) {
     printf(
@@ -20,17 +24,37 @@ static void usage(void) {
         "用法:\n"
         "  rkvc_encode -o OUTPUT [选项]\n"
         "\n"
-        "选项:\n"
-        "  -o, --output FILE     输出文件 (必填, .h265/.mp4/.mkv)\n"
+        "输入源 (三选一):\n"
         "  -i, --input FILE      输入原始 NV12 文件\n"
-        "  --testsrc             使用测试图案 (替代 -i)\n"
+        "  --stdin               从 stdin 读取原始 NV12\n"
+        "  --testsrc             使用测试图案\n"
+        "\n"
+        "输出:\n"
+        "  -o, --output FILE     输出文件 (.h265/.mp4/.mkv)\n"
+        "  --stdout              输出到 stdout (用于管道)\n"
+        "\n"
+        "参数:\n"
         "  -s, --size WxH        分辨率 (默认 1920x1080)\n"
         "  -r, --rate FPS        帧率 (默认 30)\n"
-        "  -n, --frames N        帧数 (默认 300, 仅 --testsrc)\n"
+        "  -n, --frames N        帧数 (默认无限, 仅 --testsrc)\n"
         "  -b, --bitrate BPS     码率 (默认 4000000)\n"
         "  -p, --preset PRESET   编码预设: fast/medium/slow (默认 medium)\n"
-        "  -v, --verbose         详细输出\n"
+        "  -v, --verbose         详细输出到 stderr\n"
         "  -h, --help            显示帮助\n"
+        "\n"
+        "示例:\n"
+        "  # 离线编码\n"
+        "  rkvc_encode -i raw.nv12 -o out.h265 -s 1920x1080\n"
+        "\n"
+        "  # 测试图案\n"
+        "  rkvc_encode --testsrc -o out.h265 -n 300\n"
+        "\n"
+        "  # 管道: stdin → 编码 → stdout\n"
+        "  cat raw.nv12 | rkvc_encode --stdin --stdout -s 1920x1080 > out.h265\n"
+        "\n"
+        "  # 管道: 编码 → 解码\n"
+        "  rkvc_encode --stdin --stdout -s 1920x1080 < in.nv12 | \\\n"
+        "    rkvc_decode --stdin -o decoded.nv12\n"
     );
 }
 
@@ -50,10 +74,17 @@ static int generate_test_frame(rkvc_frame *f, int idx, int w, int h) {
     return 0;
 }
 
+static double now_sec(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return ts.tv_sec + ts.tv_nsec / 1.0e9;
+}
+
 int main(int argc, char **argv) {
     const char *output = NULL;
     const char *input = NULL;
-    int testsrc = 0, width = 1920, height = 1080, fps = 30, frames = 300;
+    int use_stdin = 0, use_stdout = 0, testsrc = 0;
+    int width = 1920, height = 1080, fps = 30, frames = -1;
     int64_t bitrate = 4000000;
     rkvc_preset preset = RKVC_PRESET_MEDIUM;
     int verbose = 0;
@@ -61,6 +92,8 @@ int main(int argc, char **argv) {
     static struct option long_opts[] = {
         {"output",  required_argument, 0, 'o'},
         {"input",   required_argument, 0, 'i'},
+        {"stdin",   no_argument,       0, 'I'},
+        {"stdout",  no_argument,       0, 'O'},
         {"testsrc", no_argument,       0, 'T'},
         {"size",    required_argument, 0, 's'},
         {"rate",    required_argument, 0, 'r'},
@@ -77,6 +110,8 @@ int main(int argc, char **argv) {
         switch (c) {
         case 'o': output = optarg; break;
         case 'i': input = optarg; break;
+        case 'I': use_stdin = 1; break;
+        case 'O': use_stdout = 1; break;
         case 'T': testsrc = 1; break;
         case 's': sscanf(optarg, "%dx%d", &width, &height); break;
         case 'r': fps = atoi(optarg); break;
@@ -92,8 +127,11 @@ int main(int argc, char **argv) {
         }
     }
 
-    if (!output) { usage(); return 1; }
-    if (!input && !testsrc) { fprintf(stderr, "错误: 需要 -i 或 --testsrc\n"); return 1; }
+    if (!output && !use_stdout) { usage(); return 1; }
+    if (!input && !use_stdin && !testsrc) {
+        fprintf(stderr, "错误: 需要 -i、--stdin 或 --testsrc\n");
+        return 1;
+    }
 
     rkvc_init();
 
@@ -103,26 +141,38 @@ int main(int argc, char **argv) {
     cfg.preset = preset;
 
     rkvc_encoder *enc = NULL;
-    rkvc_err err = rkvc_encoder_open_file(&enc, &cfg, output);
+    rkvc_err err;
+
+    if (use_stdout) {
+        /* stdout 模式: 用 muxer 输出到 stdout (hevc raw stream) */
+        err = rkvc_encoder_open_file(&enc, &cfg, "pipe:1");
+    } else {
+        err = rkvc_encoder_open_file(&enc, &cfg, output);
+    }
+
     if (err != RKVC_OK) {
         fprintf(stderr, "编码器打开失败: %s\n", rkvc_err_str(err));
         return 1;
     }
 
+    const char *src_name = testsrc ? "testsrc" : (use_stdin ? "stdin" : input);
     if (verbose)
         fprintf(stderr, "编码 %dx%d@%d, %s → %s\n", width, height, fps,
-                testsrc ? "testsrc" : input, output);
+                src_name, use_stdout ? "stdout" : output);
 
     FILE *in_fp = NULL;
     if (input) {
         in_fp = fopen(input, "rb");
         if (!in_fp) { perror("打开输入文件失败"); return 1; }
+    } else if (use_stdin) {
+        in_fp = stdin;
     }
 
     int frame_count = 0;
     size_t nv12_size = (size_t)width * height * 3 / 2;
+    double t0 = now_sec();
 
-    for (int i = 0; testsrc ? (i < frames) : 1; i++) {
+    for (int i = 0; testsrc ? (frames < 0 ? 1 : i < frames) : 1; i++) {
         rkvc_frame *f = NULL;
         rkvc_frame_alloc(&f, width, height, RKVC_PIX_FMT_NV12);
 
@@ -132,15 +182,20 @@ int main(int argc, char **argv) {
             uint8_t *planes[4] = {0};
             int strides[4] = {0};
             rkvc_frame_get_data(f, planes, strides);
+
+            int ok = 0;
             if (strides[0] == width) {
-                if (fread(planes[0], 1, nv12_size, in_fp) != nv12_size) {
-                    rkvc_frame_unref(f);
-                    break;
-                }
+                ok = (fread(planes[0], 1, nv12_size, in_fp) == nv12_size);
             } else {
-                for (int y = 0; y < height * 3 / 2; y++)
-                    fread(planes[0] + y * strides[0], 1, width, in_fp);
+                ok = 1;
+                for (int y = 0; y < height * 3 / 2; y++) {
+                    if (fread(planes[0] + y * strides[0], 1, width, in_fp) != (size_t)width) {
+                        ok = 0;
+                        break;
+                    }
+                }
             }
+            if (!ok) { rkvc_frame_unref(f); break; }
             rkvc_frame_set_pts(f, i);
         }
 
@@ -150,18 +205,34 @@ int main(int argc, char **argv) {
         if (err != RKVC_OK && err != RKVC_ERR_AGAIN)
             break;
 
+        /* 取出编码包 (muxer 自动写入) */
         rkvc_packet pkt;
         while (rkvc_encoder_receive_packet(enc, &pkt) == RKVC_OK) {}
 
         frame_count++;
-        if (verbose && frame_count % 100 == 0)
-            fprintf(stderr, "  已编码 %d 帧\n", frame_count);
+        if (verbose && frame_count % 100 == 0) {
+            double elapsed = now_sec() - t0;
+            fprintf(stderr, "  已编码 %d 帧, %.1f fps\n",
+                    frame_count, elapsed > 0 ? frame_count / elapsed : 0);
+        }
     }
 
-    rkvc_encoder_close(enc);
-    if (in_fp) fclose(in_fp);
+    /* flush */
+    rkvc_encoder_drain(enc);
+    rkvc_packet pkt;
+    while (rkvc_encoder_receive_packet(enc, &pkt) == RKVC_OK) {}
 
-    fprintf(stderr, "编码完成: %d 帧 → %s\n", frame_count, output);
+    double elapsed = now_sec() - t0;
+    rkvc_encoder_close(enc);
+
+    if (in_fp && in_fp != stdin) fclose(in_fp);
+
+    if (verbose)
+        fprintf(stderr, "编码完成: %d 帧, %.3fs, %.1f fps → %s\n",
+                frame_count, elapsed,
+                elapsed > 0 ? frame_count / elapsed : 0,
+                use_stdout ? "stdout" : output);
+
     rkvc_deinit();
     return 0;
 }

@@ -35,6 +35,8 @@ rkvc_frame_unref(f);  // 用完必须 unref
 
 ## 编码器
 
+### 离线文件编码
+
 ```c
 rkvc_encoder *enc = NULL;
 rkvc_encoder_config cfg = rkvc_encoder_config_defaults();
@@ -46,7 +48,23 @@ rkvc_encoder_send_frame(enc, frame);
 rkvc_encoder_close(enc);
 ```
 
+### 实时流编码 (无文件输出)
+
+```c
+rkvc_encoder_open(&enc, &cfg);  // 不带 _file
+
+rkvc_encoder_send_frame(enc, frame);
+
+rkvc_packet pkt;
+while (rkvc_encoder_receive_packet(enc, &pkt) == RKVC_OK) {
+    // pkt.data/pkt.size 有效，可发送到网络
+}
+rkvc_encoder_close(enc);
+```
+
 ## 解码器
+
+### 离线文件解码
 
 ```c
 rkvc_decoder *dec = NULL;
@@ -57,6 +75,21 @@ while (rkvc_decoder_read_packet(dec) == RKVC_OK)
     while (rkvc_decoder_receive_frame(dec, &frame) == RKVC_OK)
         rkvc_frame_unref(frame);
 
+rkvc_decoder_close(dec);
+```
+
+### 实时流解码
+
+```c
+rkvc_decoder_open(&dec, &cfg);  // 不带 _file
+
+rkvc_decoder_send_packet(dec, data, size, pts, dts);
+
+rkvc_frame *frame = NULL;
+while (rkvc_decoder_receive_frame(dec, &frame) == RKVC_OK) {
+    // 处理解码帧
+    rkvc_frame_unref(frame);
+}
 rkvc_decoder_close(dec);
 ```
 
@@ -75,4 +108,56 @@ while (rkvc_stream_pull(s, &pkt, 0) == RKVC_OK) { /* ... */ }
 
 rkvc_stream_finish(s);
 rkvc_stream_close(s);
+```
+
+## CLI 工具
+
+### 编码
+
+```bash
+# 离线文件
+rkvc_encode -i raw.nv12 -o out.h265 -s 1920x1080 -b 4M
+
+# 测试图案
+rkvc_encode --testsrc -o out.h265 -s 1920x1080 -n 300
+
+# stdin 管道输入
+cat raw.nv12 | rkvc_encode --stdin -o out.h265 -s 1920x1080
+
+# stdout 管道输出 (用于管道连接)
+rkvc_encode --testsrc --stdout -s 640x480 -n 30 > out.h265
+```
+
+### 解码
+
+```bash
+# 离线文件
+rkvc_decode -i out.h265 -o decoded.nv12
+
+# stdin 管道输入
+rkvc_decode --stdin -s 1920x1080 -o decoded.nv12 < out.h265
+
+# stdout 管道输出
+rkvc_decode --stdin --stdout -s 1920x1080 < out.h265 > decoded.nv12
+```
+
+### 管道组合
+
+```bash
+# 编码 → 解码 一步到位
+rkvc_encode --testsrc --stdout -s 640x480 -n 30 | \
+  rkvc_decode --stdin --stdout -s 640x480 > decoded.nv12
+
+# 验证: 编码→解码数据量应等于 W*H*1.5*帧数
+rkvc_encode --testsrc --stdout -s 640x480 -n 10 | \
+  rkvc_decode --stdin --stdout -s 640x480 | wc -c
+# 预期: 640*480*1.5*10 = 4608000
+```
+
+### 硬件能力查询
+
+```bash
+rkvc_info            # 文本输出
+rkvc_info --json     # JSON 输出 (适合脚本)
+rkvc_info --version  # 版本号
 ```

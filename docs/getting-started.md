@@ -51,3 +51,21 @@ cmake --install build --prefix /usr/local
 ```bash
 gcc -o myapp myapp.c $(pkg-config --cflags --libs rkvc)
 ```
+
+## 快速使用
+
+```bash
+# 硬件能力查询
+rkvc_info
+
+# 测试图案编码
+rkvc_encode --testsrc -o test.h265 -s 1920x1080 -n 100
+
+# 解码
+rkvc_decode -i test.h265 -o decoded.nv12
+
+# 管道模式: 编码 → 解码
+rkvc_encode --testsrc --stdout -s 640x480 -n 30 | \
+  rkvc_decode --stdin --stdout -s 640x480 | wc -c
+# 预期: 640*480*1.5*30 = 13824000
+```

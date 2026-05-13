@@ -450,12 +450,11 @@ rkvc_err rkvc_encoder_receive_packet(rkvc_encoder *enc, rkvc_packet *pkt)
     pkt->key_frame = (enc->pkt->flags & AV_PKT_FLAG_KEY) ? 1 : 0;
     pkt->pos       = enc->pkt->pos;
 
-    /*
-     * 释放 enc->pkt 以便编码器回收缓冲区。
-     * 文件模式: av_interleaved_write_frame 已消费数据，此处做清理。
-     * 非文件模式: 调用者已通过 pkt 结构拿到 data/size。
-     */
-    av_packet_unref(enc->pkt);
+    if (enc->file_mode) {
+        /* 文件模式: av_interleaved_write_frame 已消费数据，清理 */
+        av_packet_unref(enc->pkt);
+    }
+    /* 非文件模式: enc->pkt 保持有效，数据在下次 send_frame/receive 前可用 */
 
     return RKVC_OK;
 }
