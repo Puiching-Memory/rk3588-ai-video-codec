@@ -29,6 +29,7 @@ nav:
   - API 参考: api.md
   - 架构: architecture.md
   - 基准测试: benchmark.md
+  - 打包分发: packaging.md
 
 markdown_extensions:
   - pymdownx.highlight

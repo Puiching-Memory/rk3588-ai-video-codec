@@ -9,44 +9,125 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  checks:
-    name: Lint, Test, Docs
+  lint:
+    name: clang-tidy
     runs-on: ubuntu-latest
-    timeout-minutes: 15
-
+    timeout-minutes: 10
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq clang-tidy
+
+      - name: Create compile_commands.json
+        run: |
+          cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+            -DFFMPEG_ROOT=/usr/local/ffmpeg-rockchip || true
+
+      - name: Run clang-tidy
+        run: |
+          clang-tidy -p build \
+            --header-filter=include/.* \
+            lib/*.c 2>&1 | tee tidy-report.txt
+          # 允许警告但不允许错误
+          ! grep "error:" tidy-report.txt
+
+  test:
+    name: Unit Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            cmake ninja-build libcmocka-dev \
+            libavcodec-dev libavformat-dev libavutil-dev libswscale-dev
+
+      - name: Configure
+        run: |
+          cmake -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DRKVC_BUILD_TESTS=ON \
+            -DFFMPEG_ROOT=/usr/local/ffmpeg-rockchip
+
+      - name: Build
+        run: ninja -C build
+
+      - name: Test
+        run: cd build && ctest --output-on-failure --output-junit results.xml
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
-          python-version-file: .python-version
+          name: test-results
+          path: build/results.xml
 
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v6
+  docs:
+    name: Docs
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq doxygen
+
+      - name: Build Doxygen
+        run: |
+          cmake -B build -DRKVC_BUILD_DOCS=ON
+          cmake --build build --target docs
+
+      - name: Upload API docs
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
-          enable-cache: true
-          cache-dependency-glob: |
-            pyproject.toml
-            uv.lock
+          name: doxygen-api-docs
+          path: build/docs/html/
+          if-no-files-found: ignore
 
-      - name: Sync dependencies
-        run: uv sync --all-groups --locked
+      - name: Build Zensical
+        run: |
+          pip install zensical
+          zensical build
 
-      - name: Run Ruff
-        run: uv run ruff check .
-
-      - name: Run pytest
-        run: uv run pytest
-
-      - name: Build docs
-        run: uv run --group docs zensical build
-
-      - name: Upload site artifact
+      - name: Upload site
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: zensical-site
           path: site/
           if-no-files-found: ignore
+
+  package:
+    name: Package
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: [test]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            cmake ninja-build patchelf \
+            libavcodec-dev libavformat-dev libavutil-dev libswscale-dev
+
+      - name: Build and package
+        run: |
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          ninja -C build package
+
+      - name: Upload packages
+        uses: actions/upload-artifact@v4
+        with:
+          name: packages
+          path: build/packages/*.tar.gz

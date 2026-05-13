@@ -1,0 +1,3 @@
+[submodule "third_party/ffmpeg-rockchip"]
+	path = third_party/ffmpeg-rockchip
+	url = https://github.com/nyanmisaka/ffmpeg-rockchip.git

@@ -48,6 +48,11 @@
             "name": "docs",
             "configurePreset": "default",
             "targets": ["rkvc_docs"]
+        },
+        {
+            "name": "package",
+            "configurePreset": "default",
+            "targets": ["package"]
         }
     ]
 }

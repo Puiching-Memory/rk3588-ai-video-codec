@@ -1,5 +1,7 @@
 # Build
 build/
+build-deps/
+build-debug/
 *.o
 *.a
 *.so
@@ -13,9 +15,19 @@ cmake_install.cmake
 Makefile
 compile_commands.json
 
-# Bench results
+# ffmpeg 子模块构建产物
+third_party/ffmpeg-rockchip/ffbuild/
+third_party/ffmpeg-rockchip/config.h
+third_party/ffmpeg-rockchip/*.pc
+third_party/ffmpeg-rockchip/ffversion.h
+
+# Test & Bench results
 results/
 bench_results/
+*.xml
+
+# Docs
+site/
 
 # IDE
 .vscode/
@@ -26,3 +38,4 @@ bench_results/
 # Misc
 .cache/
 .scratch/
+nohup.out

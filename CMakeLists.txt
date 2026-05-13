@@ -127,6 +127,11 @@ if(RKVC_BUILD_TOOLS)
                 PRIVATE ${AVCODEC_INCLUDE_DIRS})
             target_link_directories(${TOOL_NAME}
                 PRIVATE ${AVCODEC_LIB_DIRS})
+            # RPATH: 安装后从 bin/ 找 ../lib/ 中的 .so
+            set_target_properties(${TOOL_NAME} PROPERTIES
+                INSTALL_RPATH "$ORIGIN/../lib"
+                BUILD_RPATH   "${CMAKE_CURRENT_BINARY_DIR};${AVCODEC_LIB_DIRS}"
+            )
             list(APPEND RKVC_TOOLS ${TOOL_NAME})
         endif()
     endforeach()
@@ -262,3 +267,25 @@ if(RKVC_BUILD_DOCS)
         VERBATIM
     )
 endif()
+
+# ── CPack 打包 ───────────────────────────────────────────────────────
+set(CPACK_PACKAGE_NAME "rkvc")
+set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "RK3588 H.265 Video Codec Library (RKMPP)")
+set(CPACK_PACKAGE_CONTACT "rkvc@example.com")
+set(CPACK_PACKAGE_VENDOR "rkvc")
+set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")
+
+# DEB 包配置
+set(CPACK_DEBIAN_PACKAGE_DEPENDS "libcmocka-dev")
+set(CPACK_DEBIAN_PACKAGE_SECTION "libs")
+set(CPACK_DEBIAN_PACKAGE_ARCHITECTURE "arm64")
+set(CPACK_DEBIAN_FILE_NAME "rkvc_${PROJECT_VERSION}_arm64.deb")
+
+# TGZ 配置
+set(CPACK_GENERATOR "TGZ;DEB")
+
+# 输出目录
+set(CPACK_PACKAGE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/packages")
+
+include(CPack)
