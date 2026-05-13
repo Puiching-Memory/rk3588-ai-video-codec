@@ -29,7 +29,7 @@ rkvc-0.1.0-linux-aarch64-portable/
 │   ├── libavcodec.so.60     # ffmpeg-rockchip
 │   ├── libavformat.so.60
 │   ├── libavutil.so.58
-│   └── libswresample.so.4
+│   └── ...                  # 不再携带 swscale/swresample 等未使用库
 ├── include/rkvc/            # 开发头文件
 └── share/pkgconfig/rkvc.pc  # pkg-config
 ```

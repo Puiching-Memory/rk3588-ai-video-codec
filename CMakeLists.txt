@@ -36,8 +36,6 @@ elseif(EXISTS "${CMAKE_SOURCE_DIR}/third_party/ffmpeg-rockchip/libavcodec/avcode
         "${CMAKE_SOURCE_DIR}/third_party/ffmpeg-rockchip/libavcodec"
         "${CMAKE_SOURCE_DIR}/third_party/ffmpeg-rockchip/libavformat"
         "${CMAKE_SOURCE_DIR}/third_party/ffmpeg-rockchip/libavutil"
-        "${CMAKE_SOURCE_DIR}/third_party/ffmpeg-rockchip/libswscale"
-        "${CMAKE_SOURCE_DIR}/third_party/ffmpeg-rockchip/libswresample"
     )
 else()
     # Fallback: 用 pkg-config
@@ -69,7 +67,7 @@ if(RKVC_BUILD_SHARED)
             ${CMAKE_CURRENT_SOURCE_DIR}/lib
     )
     target_link_directories(rkvc_shared PRIVATE ${AVCODEC_LIB_DIRS})
-    target_link_libraries(rkvc_shared PRIVATE avcodec avformat avutil swscale pthread m)
+    target_link_libraries(rkvc_shared PRIVATE avcodec avformat avutil pthread m)
     set_target_properties(rkvc_shared PROPERTIES
         OUTPUT_NAME rkvc
         VERSION     ${PROJECT_VERSION}
@@ -91,7 +89,7 @@ if(RKVC_BUILD_STATIC)
             ${CMAKE_CURRENT_SOURCE_DIR}/lib
     )
     target_link_directories(rkvc_static PRIVATE ${AVCODEC_LIB_DIRS})
-    target_link_libraries(rkvc_static PRIVATE avcodec avformat avutil swscale pthread m)
+    target_link_libraries(rkvc_static PRIVATE avcodec avformat avutil pthread m)
     set_target_properties(rkvc_static PROPERTIES OUTPUT_NAME rkvc)
     add_library(rkvc::static ALIAS rkvc_static)
 endif()

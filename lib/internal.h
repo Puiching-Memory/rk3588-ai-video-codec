@@ -18,7 +18,6 @@
 #include <libavutil/opt.h>
 #include <libavutil/pixdesc.h>
 #include <libavutil/time.h>
-#include <libswscale/swscale.h>
 
 /*
  * AV_PIX_FMT_RKMPP — 项目内部别名，映射到 DRM PRIME 像素格式。

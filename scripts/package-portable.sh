@@ -61,17 +61,18 @@ build_ffmpeg() {
         --prefix="$FFMPEG_PREFIX" \
         --enable-gpl --enable-version3 --enable-nonfree \
         --enable-rkmpp --enable-libdrm \
+        --enable-pic \
         --enable-static --enable-shared \
         --disable-doc --disable-programs --disable-network \
+        --disable-swscale --disable-swresample \
+        --disable-x86asm \
         --disable-everything \
-        --enable-encoder=hevc_rkmpp --enable-encoder=h264_rkmpp --enable-encoder=mjpeg_rkmpp \
-        --enable-decoder=hevc_rkmpp --enable-decoder=h264_rkmpp --enable-decoder=mjpeg_rkmpp \
-        --enable-decoder=hevc --enable-decoder=h264 \
-        --enable-muxer=hevc --enable-muxer=h264 --enable-muxer=matroska --enable-muxer=mp4 \
-        --enable-muxer=null --enable-muxer=rawvideo \
-        --enable-demuxer=hevc --enable-demuxer=h264 --enable-demuxer=matroska --enable-demuxer=rawvideo \
-        --enable-parser=hevc --enable-parser=h264 \
-        --enable-protocol=file \
+        --enable-encoder=hevc_rkmpp \
+        --enable-decoder=hevc_rkmpp --enable-decoder=hevc \
+        --enable-muxer=hevc --enable-muxer=matroska --enable-muxer=mp4 --enable-muxer=mpegts \
+        --enable-demuxer=hevc --enable-demuxer=matroska --enable-demuxer=mov --enable-demuxer=mpegts \
+        --enable-parser=hevc \
+        --enable-protocol=file --enable-protocol=pipe \
         2>&1 | tail -3
 
     make -j"$(nproc)" 2>&1 | tail -3

@@ -23,9 +23,17 @@ jobs:
       - name: Build ffmpeg-rockchip
         run: |
           cd third_party/ffmpeg-rockchip
-          ./configure --enable-pic --disable-doc --disable-programs --disable-x86asm \
+          ./configure --enable-pic --disable-everything \
+            --disable-doc --disable-programs --disable-x86asm \
             --disable-avdevice --disable-avfilter --disable-postproc \
-            --disable-swresample --disable-network
+            --disable-swscale --disable-swresample --disable-network \
+            --enable-rkmpp --enable-libdrm \
+            --enable-encoder=hevc_rkmpp \
+            --enable-decoder=hevc_rkmpp --enable-decoder=hevc \
+            --enable-muxer=hevc --enable-muxer=matroska --enable-muxer=mp4 --enable-muxer=mpegts \
+            --enable-demuxer=hevc --enable-demuxer=matroska --enable-demuxer=mov --enable-demuxer=mpegts \
+            --enable-parser=hevc \
+            --enable-protocol=file --enable-protocol=pipe
           make -j$(nproc)
 
       - name: Build and package
