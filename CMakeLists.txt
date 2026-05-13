@@ -32,7 +32,13 @@ elseif(EXISTS "${CMAKE_SOURCE_DIR}/third_party/ffmpeg-rockchip/libavcodec/avcode
     # 源码树 (未 make install，直接使用 third_party/)
     message(STATUS "Using ffmpeg-rockchip from third_party/ source tree")
     set(AVCODEC_INCLUDE_DIRS "${CMAKE_SOURCE_DIR}/third_party/ffmpeg-rockchip")
-    set(AVCODEC_LIB_DIRS     "${CMAKE_SOURCE_DIR}/third_party/ffmpeg-rockchip")
+    set(AVCODEC_LIB_DIRS
+        "${CMAKE_SOURCE_DIR}/third_party/ffmpeg-rockchip/libavcodec"
+        "${CMAKE_SOURCE_DIR}/third_party/ffmpeg-rockchip/libavformat"
+        "${CMAKE_SOURCE_DIR}/third_party/ffmpeg-rockchip/libavutil"
+        "${CMAKE_SOURCE_DIR}/third_party/ffmpeg-rockchip/libswscale"
+        "${CMAKE_SOURCE_DIR}/third_party/ffmpeg-rockchip/libswresample"
+    )
 else()
     # Fallback: 用 pkg-config
     find_package(PkgConfig REQUIRED)
