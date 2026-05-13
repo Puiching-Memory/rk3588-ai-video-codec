@@ -22,7 +22,7 @@ jobs:
       - name: Generate ffmpeg config headers
         run: |
           cd third_party/ffmpeg-rockchip
-          ./configure --disable-everything --disable-doc --disable-programs
+          ./configure --disable-everything --disable-doc --disable-programs --disable-x86asm
 
       - name: Create compile_commands.json
         run: |
