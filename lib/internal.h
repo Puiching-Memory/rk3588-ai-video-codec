@@ -20,15 +20,6 @@
 #include <libavutil/time.h>
 #include <libswscale/swscale.h>
 
-/*
- * AV_PIX_FMT_RKMPP 由 ffmpeg-rockchip 内部定义，不在公共头文件中。
- * 通过 hwcontext_drm.h 使用 AV_PIX_FMT_DRM_PRIME 作为硬件帧格式，
- * RKMPP 编解码器会自动处理 DRM prime 帧到 MPP 内部格式的转换。
- */
-#ifndef AV_PIX_FMT_RKMPP
-#define AV_PIX_FMT_RKMPP AV_PIX_FMT_DRM_PRIME
-#endif
-
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>

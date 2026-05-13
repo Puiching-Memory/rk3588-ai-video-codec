@@ -15,17 +15,17 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Install dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq clang-tidy \
-            libavcodec-dev libavformat-dev libavutil-dev libswscale-dev
+          sudo apt-get install -y -qq clang-tidy
 
       - name: Create compile_commands.json
         run: |
-          cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
-            -DFFMPEG_ROOT=/usr/local/ffmpeg-rockchip
+          cmake -B build -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 
       - name: Run clang-tidy
         run: |
@@ -75,12 +75,13 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Install dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq doxygen \
-            libavcodec-dev libavformat-dev libavutil-dev libswscale-dev
+          sudo apt-get install -y -qq doxygen
 
       - name: Build Doxygen
         run: |
@@ -98,14 +99,14 @@ jobs:
       - name: Build Zensical
         run: |
           pip install zensical
-          zensical build
+          cd docs && zensical build
 
       - name: Upload site
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: zensical-site
-          path: site/
+          path: docs/site/
           if-no-files-found: ignore
 
   package:
