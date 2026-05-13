@@ -13,7 +13,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 option(RKVC_BUILD_SHARED   "Build shared library"      ON)
 option(RKVC_BUILD_STATIC   "Build static library"      ON)
 option(RKVC_BUILD_EXAMPLES "Build example programs"    ON)
-option(RKVC_BUILD_BENCH    "Build benchmark tool"      ON)
+option(RKVC_BUILD_TOOLS    "Build CLI tools"           ON)
 option(RKVC_BUILD_TESTS    "Build unit tests (CMocka)" OFF)
 option(RKVC_ENABLE_TIDY    "Enable clang-tidy checks"  OFF)
 option(RKVC_BUILD_DOCS     "Build Doxygen API docs"    OFF)
@@ -108,16 +108,28 @@ if(RKVC_BUILD_EXAMPLES)
     endforeach()
 endif()
 
-# ── 基准测试工具 ──────────────────────────────────────────────────────
-if(RKVC_BUILD_BENCH)
-    if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/bench/rkvc_bench.c")
-        add_executable(rkvc_bench bench/rkvc_bench.c)
-        target_link_libraries(rkvc_bench PRIVATE rkvc)
-        target_include_directories(rkvc_bench
-            PRIVATE ${AVCODEC_INCLUDE_DIRS})
-        target_link_directories(rkvc_bench
-            PRIVATE ${AVCODEC_LIB_DIRS})
-    endif()
+# ── CLI 工具 (安装到 bin/) ────────────────────────────────────────────
+if(RKVC_BUILD_TOOLS)
+    set(RKVC_TOOL_SOURCES
+        tools/rkvc_bench.c
+        tools/rkvc_encode.c
+        tools/rkvc_decode.c
+        tools/rkvc_info.c
+    )
+
+    set(RKVC_TOOLS "")
+    foreach(TOOL_SRC ${RKVC_TOOL_SOURCES})
+        if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${TOOL_SRC}")
+            get_filename_component(TOOL_NAME ${TOOL_SRC} NAME_WE)
+            add_executable(${TOOL_NAME} ${TOOL_SRC})
+            target_link_libraries(${TOOL_NAME} PRIVATE rkvc)
+            target_include_directories(${TOOL_NAME}
+                PRIVATE ${AVCODEC_INCLUDE_DIRS})
+            target_link_directories(${TOOL_NAME}
+                PRIVATE ${AVCODEC_LIB_DIRS})
+            list(APPEND RKVC_TOOLS ${TOOL_NAME})
+        endif()
+    endforeach()
 endif()
 
 # ── 安装 ──────────────────────────────────────────────────────────────
@@ -138,6 +150,13 @@ if(RKVC_INSTALL)
     if(RKVC_BUILD_STATIC)
         install(TARGETS rkvc_static
             ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+        )
+    endif()
+
+    # 安装 CLI 工具到 bin/
+    if(RKVC_TOOLS)
+        install(TARGETS ${RKVC_TOOLS}
+            RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
         )
     endif()
 

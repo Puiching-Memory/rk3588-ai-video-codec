@@ -37,12 +37,12 @@
         {
             "name": "default",
             "configurePreset": "default",
-            "targets": ["rkvc_shared", "rkvc_static", "rkvc_bench"]
+            "targets": ["rkvc_shared", "rkvc_static", "rkvc_bench", "rkvc_encode", "rkvc_decode", "rkvc_info"]
         },
         {
             "name": "tests",
             "configurePreset": "default",
-            "targets": ["rkvc_tests"]
+            "targets": ["test_types", "test_frame"]
         },
         {
             "name": "docs",
