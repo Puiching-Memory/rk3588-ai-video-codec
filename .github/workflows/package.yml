@@ -18,7 +18,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq \
-            cmake ninja-build patchelf nasm
+            cmake ninja-build patchelf nasm libdrm-dev
 
       - name: Build ffmpeg-rockchip
         run: |
