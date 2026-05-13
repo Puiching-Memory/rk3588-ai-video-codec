@@ -20,6 +20,12 @@
 #include <libavutil/time.h>
 #include <libswscale/swscale.h>
 
+/*
+ * AV_PIX_FMT_RKMPP — 项目内部别名，映射到 DRM PRIME 像素格式。
+ * ffmpeg-rockchip 的 RKMPP 编解码器通过 DRM prime 帧处理硬件帧。
+ */
+#define AV_PIX_FMT_RKMPP AV_PIX_FMT_DRM_PRIME
+
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
