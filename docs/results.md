@@ -17,7 +17,7 @@
 - `codec`：H264、H265、VP8、VP9、AV1 等
 - `type`：例如 `encode`、`decode`、`quality`
 - `backend`：当前实现固定为 `ffmpeg`
-- `case`：用例名，如 `360p30_500kbps`
+- `case`：用例名，如 `1080p30_100kbps`
 - `size` / `rate` / `frames`：尺寸、帧率、帧数
 - `elapsed_s` / `fps` / `realtime` / `cpu`：性能指标
 - `note`：补充指标，常见键包括 `target`、`avg_kbps`、`avg_mbps`、`psnr_avg`、`ssim_all`、`ssim_db`
@@ -30,16 +30,19 @@
 执行基准测试时默认会生成以下 PNG；`--plot-summary` 也可以对已有结果单独补绘：
 
 - `rd_performance_latency_dashboard.png`
-- `bitrate_vs_psnr.png`
-- `bitrate_vs_ssim.png`
-- `bitrate_vs_fps.png`
-- `bitrate_vs_latency_ms.png`
+- `bpp_vs_psnr.png`
+- `bpp_vs_ssim.png`
+- `bpp_vs_fps.png`
+- `bpp_vs_latency_ms.png`
+- `preview_<codec>_<case>.png`
 
 图表选择规则如下：
 
 - PSNR / SSIM 图只读取 `quality` 结果
 - FPS / 延迟图优先合并有码率数据的运行结果
 - 若不存在常规吞吐点，绘图逻辑会退回到质量数据
+- 左右预览图会优先为每个 codec 选择 `100kbps` 质量样本；如果结果中没有该档位，则退回到该 codec 的最低码率样本
+- 左右预览图固定为左原图、右压缩后解码图
 
 ## 补绘已有结果
 

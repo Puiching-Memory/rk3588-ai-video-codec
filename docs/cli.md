@@ -30,15 +30,11 @@ bash scripts/benchmark_vpu.sh [options]
 
 ## 画质与扩展测试
 
-- `--quality-ladder`：在吞吐测试之外追加统一画质测试；默认覆盖 H.264 / H.265 的质量阶梯，未指定 codec-only 时还会追加 VP8 / VP9 / AV1 的扩展质量测试
+- `--quality-ladder`：在吞吐测试之外追加统一画质测试；当前默认只保留 1080p 30fps / 100 kbps 单档位，未指定 codec-only 时还会追加 VP8 / VP9 / AV1 的扩展质量测试
 
-默认质量阶梯会覆盖以下目标码率：
+默认画质测试当前只覆盖以下目标码率：
 
-- 360p -> 500 kbps
-- 480p -> 1000 kbps
-- 720p -> 1500 kbps
-- 1080p -> 2500 kbps
-- 1080p -> 3500 kbps
+- 1080p -> 100 kbps
 
 ## 绘图参数
 
@@ -63,8 +59,10 @@ uv run benchmark-vpu --profile quick
 uv run benchmark-vpu --profile full --quality-ladder
 ```
 
-### 追加统一画质测试并自动绘图
+### 追加 100 kbps 画质测试并自动绘图
 
 ```bash
 uv run benchmark-vpu --profile quick --quality-ladder
 ```
+
+自动绘图会额外为每个 codec 产出一张左右预览图，左侧为原始测试源，右侧为压缩后解码画面。

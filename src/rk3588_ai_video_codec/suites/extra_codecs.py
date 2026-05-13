@@ -21,6 +21,7 @@ from ..operations import (
 from ..process import calc_cpu_pct, calc_fps, calc_realtime, format_float, timed_run
 from ..reporting import write_result
 from ..runtime import BenchmarkContext
+from ..test_sequences import build_source_input_args
 
 
 def run_vp8_tests(context: BenchmarkContext) -> None:
@@ -159,6 +160,7 @@ def run_generated_decode_probe(
     software_log = context.paths.log_dir / f"{slug}_software_decode_{profile}.log"
     hardware_log = context.paths.log_dir / f"{slug}_hardware_decode_{profile}.log"
 
+    source_args = build_source_input_args(context.config.source, size, rate)
     generate_command = build_ffmpeg_generate_command(
         sample,
         size,
@@ -169,6 +171,7 @@ def run_generated_decode_probe(
         pixel_format=pixel_format,
         bitrate=bitrate,
         extra_options=extra_options,
+        source_args=source_args,
     )
     generate_result = timed_run(generate_command, generate_log, cwd=context.config.repo_root)
     generate_text = generate_log.read_text(encoding="utf-8", errors="ignore")

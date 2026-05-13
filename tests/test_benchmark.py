@@ -66,24 +66,18 @@ def test_build_quality_cases() -> None:
     cases = build_quality_cases()
 
     assert [case.case_name for case in cases] == [
-        "360p30_500kbps",
-        "480p30_1000kbps",
-        "720p30_1500kbps",
-        "1080p30_2500kbps",
-        "1080p30_3500kbps",
+        "1080p30_100kbps",
     ]
-    assert cases[1].size == "848x480"
+    assert cases[0].size == "1920x1080"
+    assert cases[0].bitrate == "100k"
 
 
 def test_build_extra_quality_cases() -> None:
     assert [case.case_name for case in build_extra_quality_cases("VP9")] == [
-        "360p30_500kbps",
-        "480p30_1000kbps",
-        "720p30_1500kbps",
+        "1080p30_100kbps",
     ]
     assert [case.case_name for case in build_extra_quality_cases("AV1")] == [
-        "360p30_500kbps",
-        "720p30_1500kbps",
+        "1080p30_100kbps",
     ]
 
 

@@ -55,7 +55,7 @@ uv run benchmark-vpu --profile quick
 
 ## 常见工作流
 
-### 追加统一画质测试
+### 追加 100 kbps 单档位画质测试
 
 ```bash
 uv run benchmark-vpu --profile quick --quality-ladder
@@ -66,6 +66,8 @@ uv run benchmark-vpu --profile quick --quality-ladder
 ```bash
 uv run benchmark-vpu --profile quick --quality-ladder
 ```
+
+自动绘图除了指标图，还会生成左右预览图，左侧为原始测试源，右侧为压缩后解码画面。
 
 如果只想跑基准不生成图表，可显式传入 `--no-plot-charts`。
 

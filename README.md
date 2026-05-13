@@ -17,13 +17,13 @@ uv sync --dev
 uv run benchmark-vpu --profile quick
 ```
 
-追加统一画质测试：
+追加 100 kbps 单档位画质测试：
 
 ```bash
 uv run benchmark-vpu --profile quick --quality-ladder
 ```
 
-对已有结果目录补绘图表：
+对已有结果目录补绘图表与左右预览：
 
 ```bash
 uv run benchmark-vpu --plot-summary results/<run-dir>
@@ -50,7 +50,7 @@ uv run benchmark-vpu --plot-summary results/<run-dir>
 
 - [docs/index.md](docs/index.md)：项目概览与文档导航
 - [docs/getting-started.md](docs/getting-started.md)：环境要求、开发容器和首次运行
-- [docs/cli.md](docs/cli.md)：CLI 参数、推荐命令组合和质量档位
+- [docs/cli.md](docs/cli.md)：CLI 参数、推荐命令组合和 100 kbps 画质档位
 - [docs/results.md](docs/results.md)：结果目录结构、字段说明和绘图规则
 - [docs/development.md](docs/development.md)：代码结构、测试、CI 和文档维护
 

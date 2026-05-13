@@ -660,7 +660,6 @@ wheels = [
 
 [[package]]
 name = "rk3588-ai-video-codec"
-version = "0.1.0"
 source = { editable = "." }
 dependencies = [
     { name = "matplotlib" },

@@ -2,13 +2,16 @@ from __future__ import annotations
 
 import csv
 import re
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from .benchmark import BenchmarkError
+from .ffmpeg_backend import FFMPEG_BIN
 
 NOTE_PAIR_RE = re.compile(r"([A-Za-z0-9_]+)=([^\s]+)")
+CASE_KBPS_RE = re.compile(r"_(\d+)kbps$", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -18,8 +21,13 @@ class SummaryPoint:
     backend: str | None
     case_name: str
     size: str
-    bitrate_kbps: float | None
-    target_kbps: float | None
+    rate: int | None
+    frames: int | None
+    note: str
+    artifact: Path | None
+    source_path: Path | None
+    bpp: float | None
+    target_bpp: float | None
     psnr_avg: float | None
     ssim_all: float | None
     ssim_db: float | None
@@ -56,17 +64,32 @@ def parse_percent(value: str | None) -> float | None:
     return float(value.rstrip("%"))
 
 
-def parse_kbps(value: str | None) -> float | None:
+def parse_int(value: str | None) -> int | None:
+    if value is None or value == "" or value == "n/a":
+        return None
+    return int(value)
+
+
+def parse_bpp(value: str | None) -> float | None:
     if value is None or value == "":
         return None
-    lower = value.lower()
-    if lower.endswith("kbps"):
-        return float(lower[:-4])
-    if lower.endswith("k"):
-        return float(lower[:-1])
-    if lower.endswith("m"):
-        return float(lower[:-1]) * 1000.0
-    return float(lower)
+    return float(value)
+
+
+def resolve_artifact_path(value: str | None, base_dir: Path) -> Path | None:
+    if value is None or value == "":
+        return None
+    artifact = Path(value)
+    if not artifact.is_absolute():
+        artifact = base_dir / artifact
+    return artifact
+
+
+def parse_case_kbps(case_name: str) -> int | None:
+    match = CASE_KBPS_RE.search(case_name)
+    if not match:
+        return None
+    return int(match.group(1))
 
 
 def infer_backend(codec: str, result_type: str, note: str, backend: str | None) -> str | None:
@@ -85,7 +108,10 @@ def infer_backend(codec: str, result_type: str, note: str, backend: str | None) 
     return None
 
 
-def load_summary_points(summary_path: Path) -> list[SummaryPoint]:
+def load_summary_points(
+    summary_path: Path,
+    source_path: str | None = None,
+) -> list[SummaryPoint]:
     resolved_summary = resolve_summary_path(summary_path)
     points: list[SummaryPoint] = []
     with resolved_summary.open("r", encoding="utf-8") as file:
@@ -95,15 +121,11 @@ def load_summary_points(summary_path: Path) -> list[SummaryPoint]:
                 continue
 
             note_metrics = parse_note_metrics(row.get("note", ""))
-            bitrate_kbps = parse_float(note_metrics.get("avg_kbps"))
-            if bitrate_kbps is None:
-                avg_mbps = parse_float(note_metrics.get("avg_mbps"))
-                if avg_mbps is not None:
-                    bitrate_kbps = avg_mbps * 1000.0
+            bpp = parse_float(note_metrics.get("avg_bpp"))
 
-            frames_text = row.get("frames")
+            rate = parse_int(row.get("rate"))
+            frames = parse_int(row.get("frames"))
             elapsed_s = parse_float(row.get("elapsed_s"))
-            frames = int(frames_text) if frames_text and frames_text.isdigit() else None
             latency_ms = None
             if frames and elapsed_s is not None:
                 latency_ms = (elapsed_s / frames) * 1000.0
@@ -120,8 +142,13 @@ def load_summary_points(summary_path: Path) -> list[SummaryPoint]:
                     ),
                     case_name=row.get("case", ""),
                     size=row.get("size", ""),
-                    bitrate_kbps=bitrate_kbps,
-                    target_kbps=parse_kbps(note_metrics.get("target")),
+                    rate=rate,
+                    frames=frames,
+                    note=row.get("note", ""),
+                    artifact=resolve_artifact_path(row.get("artifact"), resolved_summary.parent),
+                    source_path=Path(source_path) if source_path else None,
+                    bpp=bpp,
+                    target_bpp=parse_float(note_metrics.get("target_bpp")),
                     psnr_avg=parse_float(note_metrics.get("psnr_avg")),
                     ssim_all=parse_float(note_metrics.get("ssim_all")),
                     ssim_db=parse_float(note_metrics.get("ssim_db")),
@@ -139,7 +166,7 @@ def select_quality_points(points: list[SummaryPoint]) -> list[SummaryPoint]:
         point
         for point in points
         if point.result_type == "quality"
-        and (point.bitrate_kbps is not None or point.target_kbps is not None)
+        and (point.bpp is not None or point.target_bpp is not None)
     ]
 
 
@@ -147,7 +174,7 @@ def select_runtime_points(points: list[SummaryPoint]) -> list[SummaryPoint]:
     runtime_points = [
         point
         for point in points
-        if (point.bitrate_kbps is not None or point.target_kbps is not None)
+        if (point.bpp is not None or point.target_bpp is not None)
         and (point.fps is not None or point.latency_ms is not None)
     ]
     if runtime_points:
@@ -157,7 +184,7 @@ def select_runtime_points(points: list[SummaryPoint]) -> list[SummaryPoint]:
     if quality_points:
         return quality_points
 
-    raise BenchmarkError("summary.tsv 中没有可用于绘图的码率数据")
+    raise BenchmarkError("summary.tsv 中没有可用于绘图的 bpp 数据")
 
 
 def select_plot_points(points: list[SummaryPoint]) -> list[SummaryPoint]:
@@ -167,6 +194,35 @@ def select_plot_points(points: list[SummaryPoint]) -> list[SummaryPoint]:
     return select_runtime_points(points)
 
 
+def select_preview_points(points: list[SummaryPoint]) -> list[SummaryPoint]:
+    source_points = select_quality_points(points)
+    if not source_points:
+        source_points = [p for p in points if p.result_type == "encode"]
+    if not source_points:
+        source_points = [p for p in points if p.artifact is not None]
+
+    grouped: dict[str, list[SummaryPoint]] = {}
+    for point in source_points:
+        grouped.setdefault(point.codec, []).append(point)
+
+    preview_points: list[SummaryPoint] = []
+    for codec in sorted(grouped):
+        codec_points = grouped[codec]
+        preview_points.append(
+            min(
+                codec_points,
+                key=lambda point: (
+                    parse_case_kbps(point.case_name) != 100,
+                    parse_case_kbps(point.case_name) or 10**9,
+                    "2160" in point.case_name,
+                    point.result_type != "encode",
+                    plot_bpp(point) or float("inf"),
+                ),
+            )
+        )
+    return preview_points
+
+
 def series_label(point: SummaryPoint, include_type: bool) -> str:
     backend_suffix = f" ({point.backend})" if point.backend else ""
     if include_type:
@@ -174,10 +230,10 @@ def series_label(point: SummaryPoint, include_type: bool) -> str:
     return f"{point.codec}{backend_suffix}"
 
 
-def plot_bitrate_kbps(point: SummaryPoint) -> float | None:
-    if point.target_kbps is not None:
-        return point.target_kbps
-    return point.bitrate_kbps
+def plot_bpp(point: SummaryPoint) -> float | None:
+    if point.target_bpp is not None:
+        return point.target_bpp
+    return point.bpp
 
 
 def build_series(points: list[SummaryPoint]) -> dict[str, list[SummaryPoint]]:
@@ -188,7 +244,7 @@ def build_series(points: list[SummaryPoint]) -> dict[str, list[SummaryPoint]]:
         grouped.setdefault(label, []).append(point)
 
     for label in grouped:
-        grouped[label].sort(key=lambda point: plot_bitrate_kbps(point) or 0.0)
+        grouped[label].sort(key=lambda point: plot_bpp(point) or 0.0)
     return grouped
 
 
@@ -214,7 +270,7 @@ def draw_metric(
         x_values: list[float] = []
         y_values: list[float] = []
         for point in points:
-            x_value = plot_bitrate_kbps(point)
+            x_value = plot_bpp(point)
             y_value = getattr(point, metric_name)
             if x_value is None or y_value is None:
                 continue
@@ -227,7 +283,7 @@ def draw_metric(
         ax.plot(x_values, y_values, marker="o", linewidth=2, label=label)
         plotted = True
 
-    ax.set_xlabel("Bit-rate [kbps]")
+    ax.set_xlabel("Bits per pixel [bpp]")
     ax.set_ylabel(y_label)
     ax.grid(True, alpha=0.35)
     if plotted:
@@ -252,6 +308,69 @@ def render_metric_chart(
     return out_path
 
 
+def build_preview_filter(size: str, frame_index: int) -> str:
+    crop_size = size.replace("x", ":")
+    end_frame = frame_index + 1
+    return (
+        f"[0:v]trim=start_frame={frame_index}:end_frame={end_frame},"
+        f"setpts=PTS-STARTPTS,settb=AVTB,format=yuv420p,crop={crop_size},setsar=1[left];"
+        f"[1:v]trim=start_frame={frame_index}:end_frame={end_frame},"
+        f"setpts=PTS-STARTPTS,settb=AVTB,format=yuv420p,crop={crop_size},setsar=1[right];"
+        "[left][right]hstack=inputs=2"
+    )
+
+
+def render_preview_image(point: SummaryPoint, out_dir: Path) -> Path | None:
+    if point.artifact is None or not point.artifact.exists() or point.rate is None:
+        return None
+
+    out_path = out_dir / f"preview_{point.codec.lower()}_{point.case_name}.png"
+
+    if point.source_path is not None and point.source_path.exists():
+        source_input = ["-i", str(point.source_path)]
+        # Use frame 0 for file sources (we don't know exact frame count)
+        frame_index = 0
+    else:
+        source_input = [
+            "-f", "lavfi",
+            "-i", f"testsrc2=size={point.size}:rate={point.rate}",
+        ]
+        frame_index = 0
+        if point.frames is not None and point.frames > 1:
+            frame_index = min(point.frames // 2, point.frames - 1)
+
+    command = [
+        FFMPEG_BIN,
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        *source_input,
+        "-i",
+        str(point.artifact),
+        "-filter_complex",
+        build_preview_filter(point.size, frame_index),
+        "-frames:v",
+        "1",
+        "-update",
+        "1",
+        "-y",
+        str(out_path),
+    ]
+    completed = subprocess.run(command, capture_output=True, text=True, check=False)
+    if completed.returncode != 0:
+        return None
+    return out_path
+
+
+def render_preview_images(points: list[SummaryPoint], out_dir: Path) -> list[Path]:
+    output_paths: list[Path] = []
+    for point in select_preview_points(points):
+        preview_path = render_preview_image(point, out_dir)
+        if preview_path is not None:
+            output_paths.append(preview_path)
+    return output_paths
+
+
 def render_dashboard(
     pyplot: Any,
     quality_series: dict[str, list[SummaryPoint]],
@@ -261,13 +380,13 @@ def render_dashboard(
 ) -> Path:
     figure, axes = pyplot.subplots(2, 2, figsize=(14, 10), constrained_layout=True)
     draw_metric(axes[0][0], quality_series, "psnr_avg", "PSNR [dB]")
-    axes[0][0].set_title("Bit-rate vs PSNR")
+    axes[0][0].set_title("BPP vs PSNR")
     draw_metric(axes[0][1], quality_series, "ssim_all", "SSIM")
-    axes[0][1].set_title("Bit-rate vs SSIM")
+    axes[0][1].set_title("BPP vs SSIM")
     draw_metric(axes[1][0], runtime_series, "fps", "Throughput [fps]")
-    axes[1][0].set_title("Bit-rate vs Throughput")
+    axes[1][0].set_title("BPP vs Throughput")
     draw_metric(axes[1][1], runtime_series, "latency_ms", "Latency [ms/frame]")
-    axes[1][1].set_title("Bit-rate vs Latency")
+    axes[1][1].set_title("BPP vs Latency")
     figure.suptitle(title)
     figure.savefig(out_path, dpi=180)
     pyplot.close(figure)
@@ -279,9 +398,10 @@ def render_summary_plots(
     *,
     out_dir: Path | None = None,
     title: str | None = None,
+    source_path: str | None = None,
 ) -> list[Path]:
     resolved_summary = resolve_summary_path(summary_path)
-    all_points = load_summary_points(resolved_summary)
+    all_points = load_summary_points(resolved_summary, source_path=source_path)
     quality_points = select_quality_points(all_points)
     runtime_points = select_runtime_points(all_points)
     quality_series = build_series(quality_points) if quality_points else {}
@@ -304,7 +424,7 @@ def render_summary_plots(
         render_metric_chart(
             pyplot,
             quality_series,
-            out_dir / "bitrate_vs_psnr.png",
+            out_dir / "bpp_vs_psnr.png",
             f"{plot_title} - PSNR",
             "psnr_avg",
             "PSNR [dB]",
@@ -312,7 +432,7 @@ def render_summary_plots(
         render_metric_chart(
             pyplot,
             quality_series,
-            out_dir / "bitrate_vs_ssim.png",
+            out_dir / "bpp_vs_ssim.png",
             f"{plot_title} - SSIM",
             "ssim_all",
             "SSIM",
@@ -320,7 +440,7 @@ def render_summary_plots(
         render_metric_chart(
             pyplot,
             runtime_series,
-            out_dir / "bitrate_vs_fps.png",
+            out_dir / "bpp_vs_fps.png",
             f"{plot_title} - Throughput",
             "fps",
             "Throughput [fps]",
@@ -328,10 +448,11 @@ def render_summary_plots(
         render_metric_chart(
             pyplot,
             runtime_series,
-            out_dir / "bitrate_vs_latency_ms.png",
+            out_dir / "bpp_vs_latency_ms.png",
             f"{plot_title} - Latency",
             "latency_ms",
             "Latency [ms/frame]",
         ),
     ]
+    output_paths.extend(render_preview_images(all_points, out_dir))
     return output_paths

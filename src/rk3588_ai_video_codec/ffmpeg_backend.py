@@ -52,23 +52,32 @@ def build_ffmpeg_generate_command(
     pixel_format: str,
     bitrate: str | None = None,
     extra_options: Sequence[str] = (),
+    source: str | None = None,
+    source_args: Sequence[str] | None = None,
 ) -> list[str]:
     command = [
         FFMPEG_BIN,
         "-hide_banner",
         "-loglevel",
         "error",
-        "-f",
-        "lavfi",
-        "-i",
-        f"testsrc2=size={size}:rate={rate}",
+    ]
+    if source_args is not None:
+        command.extend(source_args)
+    elif source is not None:
+        command.extend(["-i", source])
+    else:
+        command.extend([
+            "-f", "lavfi",
+            "-i", f"testsrc2=size={size}:rate={rate}",
+        ])
+    command.extend([
         "-frames:v",
         str(frames),
         "-pix_fmt",
         pixel_format,
         "-c:v",
         encoder,
-    ]
+    ])
     if bitrate is not None:
         command.extend(["-b:v", bitrate])
     command.extend(extra_options)

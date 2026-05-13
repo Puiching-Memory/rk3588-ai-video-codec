@@ -17,6 +17,7 @@ SUMMARY_HEADER = (
 class BenchmarkConfig:
     profile: str = "full"
     out_dir: Path | None = None
+    source: str | None = None
     run_h264: bool = True
     run_h265: bool = True
     run_av1: bool = True

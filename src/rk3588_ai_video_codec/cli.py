@@ -6,6 +6,7 @@ from pathlib import Path
 
 from .benchmark import BenchmarkConfig, BenchmarkError, BenchmarkRunner
 from .plotting import render_summary_plots
+from .test_sequences import MAX_DOWNLOAD_BYTES, is_within_limit, list_sequences, resolve_source
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -20,6 +21,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="选择测试档位，默认 full",
     )
     parser.add_argument("--out-dir", type=Path, help="指定输出目录，默认 results/<timestamp>")
+    parser.add_argument(
+        "--source",
+        help=(
+            "测试视频源：已知序列名（如 ducks_take_off_1080p50）、"
+            "本地文件路径，留空则使用 testsrc2 合成源"
+        ),
+    )
+    parser.add_argument(
+        "--list-sequences",
+        action="store_true",
+        help="列出所有已知测试序列并退出",
+    )
     mode_group = parser.add_mutually_exclusive_group()
     mode_group.add_argument("--h264-only", action="store_true", help="仅运行 H.264 测试")
     mode_group.add_argument("--h265-only", action="store_true", help="仅运行 H.265 测试")
@@ -29,7 +42,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--quality-ladder",
         action="store_true",
         help=(
-            "追加统一画质测试；默认覆盖 H.264/H.265 质量阶梯，"
+            "追加统一画质测试；当前默认仅保留 100 kbps 单档位，"
             "未指定 codec-only 时还会追加 VP8/VP9/AV1 扩展画质测试"
         ),
     )
@@ -66,12 +79,22 @@ def main(argv: Sequence[str] | None = None) -> int:
                 args.plot_summary,
                 out_dir=args.plot_out_dir,
                 title=args.plot_title,
+                source_path=args.source,
             )
         except BenchmarkError as error:
             parser.exit(1, f"ERROR: {error}\n")
 
         for output_path in output_paths:
             print(f"图表: {output_path}")
+        return 0
+
+    if args.list_sequences:
+        for seq in list_sequences():
+            size_mb = seq.file_size_bytes / 1024 / 1024
+            limit_mb = MAX_DOWNLOAD_BYTES / 1024 / 1024
+            tag = "" if is_within_limit(seq) else f" [超大, >{limit_mb:.0f}MB]"
+            res = f"{seq.width}x{seq.height}@{seq.fps}"
+            print(f"  {seq.name:35s} {res:16s} {size_mb:6.0f} MB — {seq.description}{tag}")
         return 0
 
     run_h264 = True
@@ -96,6 +119,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         BenchmarkConfig(
             profile=args.profile,
             out_dir=args.out_dir,
+            source=args.source,
             run_h264=run_h264,
             run_h265=run_h265,
             run_av1=run_av1,
@@ -109,10 +133,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         exit_code = runner.run()
         if args.plot_charts:
+            resolved_source = resolve_source(args.source) if args.source else None
             output_paths = render_summary_plots(
                 runner.context.paths.summary_tsv,
                 out_dir=args.plot_out_dir,
                 title=args.plot_title,
+                source_path=resolved_source,
             )
             for output_path in output_paths:
                 print(f"图表: {output_path}")

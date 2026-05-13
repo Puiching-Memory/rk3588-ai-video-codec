@@ -30,7 +30,7 @@ uv run benchmark-vpu --plot-summary results/quality-ladder-20260504
 
 - 验证 FFmpeg Rockchip 栈在目标机器上是否已经打通
 - 比较不同 codec 在同一台 RK3588 设备上的吞吐和时延表现
-- 采集质量阶梯数据，分析码率与 PSNR / SSIM 的折中关系
+- 采集 100 kbps 单档位质量数据，并输出左右预览图观察压缩效果
 - 对既有测试结果补出标准图表，便于归档、分享和汇报
 
 ## 文档导航

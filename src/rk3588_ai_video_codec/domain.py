@@ -70,26 +70,31 @@ def parse_ssim_all(log_text: str) -> tuple[str, str] | None:
 
 def build_quality_cases() -> tuple[QualityCase, ...]:
     return (
-        QualityCase("360p30_500kbps", "640x360", 30, "500k"),
-        QualityCase("480p30_1000kbps", "848x480", 30, "1000k"),
-        QualityCase("720p30_1500kbps", "1280x720", 30, "1500k"),
-        QualityCase("1080p30_2500kbps", "1920x1080", 30, "2500k"),
-        QualityCase("1080p30_3500kbps", "1920x1080", 30, "3500k"),
+        QualityCase("1080p30_100kbps", "1920x1080", 30, "100k"),
     )
 
 
-def build_extra_quality_cases(codec_label: str) -> tuple[QualityCase, ...]:
-    cases = build_quality_cases()
-    if codec_label == "AV1":
-        return (cases[0], cases[2])
-    return cases[:3]
+def build_extra_quality_cases(_codec_label: str) -> tuple[QualityCase, ...]:
+    return build_quality_cases()
 
 
-def calc_avg_kbps(bytes_written: int, frames: int, rate: int) -> str:
-    if frames <= 0 or rate <= 0:
+def parse_size(size: str) -> tuple[int, int]:
+    width_text, height_text = size.split("x", maxsplit=1)
+    return int(width_text), int(height_text)
+
+
+def calc_avg_bpp(bytes_written: int, frames: int, width: int, height: int) -> str:
+    if frames <= 0 or width <= 0 or height <= 0:
         return "n/a"
-    avg_kbps = (bytes_written * 8 * rate) / (frames * 1000)
-    return f"{avg_kbps:.1f}"
+    avg_bpp = (bytes_written * 8) / (width * height * frames)
+    return f"{avg_bpp:.4f}"
+
+
+def calc_target_bpp(bitrate: str, width: int, height: int, rate: int) -> str:
+    if width <= 0 or height <= 0 or rate <= 0:
+        return "n/a"
+    target_bpp = bitrate_to_bps(bitrate) / (width * height * rate)
+    return f"{target_bpp:.4f}"
 
 
 def bitrate_to_kbps(bitrate: str) -> int:

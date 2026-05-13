@@ -7,8 +7,10 @@ from pathlib import Path
 from .domain import (
     QualityCase,
     build_quality_compare_filter,
-    calc_avg_kbps,
+    calc_avg_bpp,
+    calc_target_bpp,
     parse_psnr_average,
+    parse_size,
     parse_ssim_all,
 )
 from .ffmpeg_backend import (
@@ -21,6 +23,11 @@ from .ffmpeg_backend import (
 from .process import calc_cpu_pct, calc_fps, calc_realtime, format_float, timed_run
 from .reporting import write_result
 from .runtime import BenchmarkContext
+from .test_sequences import build_source_input_args
+
+
+def _source_args(context: BenchmarkContext, size: str, rate: int) -> list[str]:
+    return build_source_input_args(context.config.source, size, rate)
 
 
 def run_ffmpeg_encode(
@@ -42,10 +49,7 @@ def run_ffmpeg_encode(
         "-hide_banner",
         "-loglevel",
         "error",
-        "-f",
-        "lavfi",
-        "-i",
-        f"testsrc2=size={size}:rate={rate}",
+        *_source_args(context, size, rate),
         "-frames:v",
         str(frames),
         "-pix_fmt",
@@ -81,6 +85,7 @@ def run_ffmpeg_encode(
         return
 
     bytes_written = artifact.stat().st_size
+    width, height = parse_size(size)
     fps = calc_fps(frames, result.elapsed)
     write_result(
         context,
@@ -95,7 +100,7 @@ def run_ffmpeg_encode(
         fps,
         calc_realtime(fps, rate),
         calc_cpu_pct(result.user, result.sys, result.elapsed),
-        note=f"avg_mbps={(bytes_written * 8 * rate) / (frames * 1000000):.2f}",
+        note=f"avg_bpp={calc_avg_bpp(bytes_written, frames, width, height)}",
         artifact=str(artifact),
         backend="ffmpeg",
     )
@@ -192,10 +197,7 @@ def run_ffmpeg_quality(
         "-hide_banner",
         "-loglevel",
         "error",
-        "-f",
-        "lavfi",
-        "-i",
-        f"testsrc2=size={case.size}:rate={case.rate}",
+        *_source_args(context, case.size, case.rate),
         "-frames:v",
         str(frames),
         "-pix_fmt",
@@ -235,10 +237,7 @@ def run_ffmpeg_quality(
         "-hide_banner",
         "-loglevel",
         "info",
-        "-f",
-        "lavfi",
-        "-i",
-        f"testsrc2=size={case.size}:rate={case.rate}",
+        *_source_args(context, case.size, case.rate),
         "-c:v",
         ffmpeg_codec,
         "-i",
@@ -335,6 +334,7 @@ def run_ffmpeg_quality(
 
     ssim_all, ssim_db = ssim_metrics
     bytes_written = artifact.stat().st_size
+    width, height = parse_size(case.size)
     total_elapsed = encode_result.elapsed + psnr_result.elapsed + ssim_result.elapsed
     total_user = encode_result.user + psnr_result.user + ssim_result.user
     total_sys = encode_result.sys + psnr_result.sys + ssim_result.sys
@@ -353,7 +353,8 @@ def run_ffmpeg_quality(
         calc_realtime(fps, case.rate),
         calc_cpu_pct(total_user, total_sys, total_elapsed),
         (
-            f"target={case.bitrate} avg_kbps={calc_avg_kbps(bytes_written, frames, case.rate)} "
+            f"target_bpp={calc_target_bpp(case.bitrate, width, height, case.rate)} "
+            f"avg_bpp={calc_avg_bpp(bytes_written, frames, width, height)} "
             f"psnr_avg={psnr_average} ssim_all={ssim_all} ssim_db={ssim_db}"
         ),
         str(artifact),
@@ -400,6 +401,7 @@ def run_ffmpeg_generated_encode_to_file(
         )
         return None
 
+    source_args = build_source_input_args(context.config.source, size, rate)
     command = build_ffmpeg_generate_command(
         artifact,
         size,
@@ -410,6 +412,7 @@ def run_ffmpeg_generated_encode_to_file(
         pixel_format=pixel_format,
         bitrate=bitrate,
         extra_options=extra_options,
+        source_args=source_args,
     )
     result = timed_run(command, log_path, cwd=context.config.repo_root)
     log_text = log_path.read_text(encoding="utf-8", errors="ignore")
@@ -439,6 +442,7 @@ def run_ffmpeg_generated_encode_to_file(
         return None
 
     bytes_written = artifact.stat().st_size
+    width, height = parse_size(size)
     fps = calc_fps(frames, result.elapsed)
     write_result(
         context,
@@ -453,7 +457,7 @@ def run_ffmpeg_generated_encode_to_file(
         fps,
         calc_realtime(fps, rate),
         calc_cpu_pct(result.user, result.sys, result.elapsed),
-        f"encoder={encoder} avg_kbps={calc_avg_kbps(bytes_written, frames, rate)}",
+        f"encoder={encoder} avg_bpp={calc_avg_bpp(bytes_written, frames, width, height)}",
         str(artifact),
         backend="ffmpeg",
     )
@@ -475,6 +479,7 @@ def run_ffmpeg_roundtrip(
     slug = codec_label.lower()
     encode_log = context.paths.log_dir / f"{slug}_pipeline_encode_{case_name}.log"
     decode_log = context.paths.log_dir / f"{slug}_pipeline_decode_{case_name}.log"
+    source_args = build_source_input_args(context.config.source, size, rate)
     encode_command = build_ffmpeg_generate_command(
         artifact,
         size,
@@ -484,6 +489,7 @@ def run_ffmpeg_roundtrip(
         muxer=muxer,
         pixel_format="nv12",
         bitrate=bitrate,
+        source_args=source_args,
     )
     encode_result = timed_run(encode_command, encode_log, cwd=context.config.repo_root)
     encode_text = encode_log.read_text(encoding="utf-8", errors="ignore")
@@ -541,6 +547,7 @@ def run_ffmpeg_roundtrip(
         return
 
     bytes_written = artifact.stat().st_size
+    width, height = parse_size(size)
     total_elapsed = encode_result.elapsed + decode_result.elapsed
     total_user = encode_result.user + decode_result.user
     total_sys = encode_result.sys + decode_result.sys
@@ -560,7 +567,7 @@ def run_ffmpeg_roundtrip(
         calc_cpu_pct(total_user, total_sys, total_elapsed),
         note=(
             f"encoder={ffmpeg_codec} decoder={ffmpeg_codec} "
-            f"avg_kbps={calc_avg_kbps(bytes_written, frames, rate)}"
+            f"avg_bpp={calc_avg_bpp(bytes_written, frames, width, height)}"
         ),
         artifact=str(artifact),
         backend="ffmpeg",
