@@ -1,0 +1,23 @@
+[project]
+site_name = "rkvc — RK3588 Video Codec"
+site_description = "RK3588 H.265 硬件视频编解码 C 库文档"
+site_url = "https://example.com/rkvc"
+repo_url = "https://github.com/example/rkvc"
+repo_name = "rkvc"
+
+[theme]
+name = "material"
+language = "zh"
+features = ["navigation.tabs"]
+
+[[theme.palette]]
+media = "(prefers-color-scheme: light)"
+scheme = "default"
+primary = "blue"
+accent = "blue"
+
+[[theme.palette]]
+media = "(prefers-color-scheme: dark)"
+scheme = "slate"
+primary = "blue"
+accent = "blue"

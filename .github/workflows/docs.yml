@@ -1,0 +1,46 @@
+name: Docs
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  docs:
+    name: Docs
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq doxygen
+
+      - name: Build Doxygen
+        run: |
+          cmake -B build -DRKVC_BUILD_DOCS=ON
+          cmake --build build --target docs
+
+      - name: Upload API docs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: doxygen-api-docs
+          path: build/docs/html/
+          if-no-files-found: ignore
+
+      - name: Build Zensical
+        run: |
+          pip install zensical
+          zensical build
+
+      - name: Upload site
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: zensical-site
+          path: site/
+          if-no-files-found: ignore
