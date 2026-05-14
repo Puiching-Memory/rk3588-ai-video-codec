@@ -90,6 +90,8 @@ jobs:
         run: ninja -C build
 
       - name: Test
+        env:
+          RKVC_VALGRIND_HARDWARE: "0"
         run: cd build && ctest --output-on-failure --output-junit results.xml
 
       - name: Upload test results

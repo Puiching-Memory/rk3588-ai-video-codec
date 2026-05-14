@@ -1001,6 +1001,7 @@ rkvc_bench [选项]
 | 流式编码 | `examples/stream_encode.c` | 流式 API 编码示例               |
 | 流式解码 | `examples/stream_decode.c` | 流式 API 解码示例               |
 | 延迟测试 | `examples/latency_test.c`  | 模拟摄像头端到端延迟测试        |
+| PSNR 测试 | `examples/psnr_test.c`    | 端到端编解码质量 PSNR 测试      |
 
 构建后位于 `build/` 目录：
 
@@ -1013,6 +1014,7 @@ rkvc_bench [选项]
 ./build/example_stream_decode
 ./build/example_latency_test -l               # 低延迟模式
 ./build/example_latency_test -s 1280x720 -r 60 -l  # 自定义参数
+./build/example_psnr_test -i input.h265       # 端到端 PSNR 测试
 ```
 
 ---
@@ -1073,6 +1075,25 @@ cd build
 | 指标 | 编码延迟 | 端到端延迟 |
 | ---- | -------- | ---------- |
 | 平均 | ~7 ms    | ~69 ms     |
+
+### 10.5 端到端 PSNR 测试
+
+`psnr_test` 对输入 H.265 文件执行完整的 编解码→编码→重放解码→逐帧PSNR比较 流水线，量化编解码质量损失。
+
+```bash
+cd build
+
+# 基本用法 (默认 4Mbps)
+./example_psnr_test -i input.h265
+
+# 自定义码率和帧数限制
+./example_psnr_test -i input.h265 -b 8000000 -n 100
+
+# 逐帧 PSNR 明细
+./example_psnr_test -i input.h265 -v
+```
+
+输出指标：Y/U/V 分量平均 PSNR、加权平均 PSNR、Y 分量最低帧 PSNR 及总耗时。
 | P50  | ~7 ms    | ~76 ms     |
 | P95  | ~8 ms    | ~84 ms     |
 | 最大 | ~8 ms    | ~111 ms    |

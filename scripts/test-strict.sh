@@ -5,7 +5,7 @@ set -euo pipefail
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 COVERAGE_MIN_LINE=${RKVC_COVERAGE_MIN_LINE:-0}
 COVERAGE_MIN_BRANCH=${RKVC_COVERAGE_MIN_BRANCH:-0}
-VALGRIND_HARDWARE=${RKVC_VALGRIND_HARDWARE:-0}
+VALGRIND_HARDWARE=${RKVC_VALGRIND_HARDWARE:-1}
 
 run_matrix() {
     local preset="$1"
@@ -39,11 +39,13 @@ if command -v valgrind >/dev/null 2>&1; then
             continue
         fi
         echo "==> valgrind: $test_name"
+        VALGRIND_SUPP="$ROOT_DIR/scripts/mpp.supp"
         valgrind --quiet \
             --leak-check=full \
             --show-leak-kinds=all \
             --track-origins=yes \
             --error-exitcode=1 \
+            ${VALGRIND_SUPP:+--suppressions="$VALGRIND_SUPP"} \
             "$test_bin"
     done
 else

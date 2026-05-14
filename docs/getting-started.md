@@ -88,3 +88,17 @@ rkvc_encode --testsrc --stdout -s 640x480 -n 30 | \
 ```
 
 输出逐帧延迟明细及统计摘要（P50/P95/P99）。详见 [基准测试](benchmark.md)。
+
+## PSNR 质量测试
+
+端到端编解码质量测试（解码 → 编码 → 重放解码 → 逐帧 PSNR 比较）：
+
+```bash
+# 基本用法
+./example_psnr_test -i input.h265
+
+# 逐帧 PSNR 明细
+./example_psnr_test -i input.h265 -v -n 100
+```
+
+输出 Y/U/V 平均 PSNR、加权平均 PSNR 及最低帧 PSNR。详见 [基准测试](benchmark.md)。

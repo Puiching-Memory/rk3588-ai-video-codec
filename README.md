@@ -131,7 +131,7 @@ include/rkvc/         # 公共 API 头文件
     stream.h          # 实时流式处理
 lib/                  # 库实现
 bench/                # 基准测试工具
-examples/             # 示例程序 (encode_file, decode_file, transcode, stream_*, latency_test)
+examples/             # 示例程序 (encode_file, decode_file, transcode, stream_*, latency_test, psnr_test)
 ```
 
 ## 基准测试
