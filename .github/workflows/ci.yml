@@ -76,7 +76,8 @@ jobs:
             --enable-muxer=hevc --enable-muxer=matroska --enable-muxer=mp4 --enable-muxer=mpegts \
             --enable-demuxer=hevc --enable-demuxer=matroska --enable-demuxer=mov --enable-demuxer=mpegts \
             --enable-parser=hevc \
-            --enable-protocol=file --enable-protocol=pipe
+            --enable-protocol=file --enable-protocol=pipe \
+            --extra-cflags=-fPIC
           make -j$(nproc)
 
       - name: Configure
@@ -135,7 +136,8 @@ jobs:
             --enable-muxer=hevc --enable-muxer=matroska --enable-muxer=mp4 --enable-muxer=mpegts \
             --enable-demuxer=hevc --enable-demuxer=matroska --enable-demuxer=mov --enable-demuxer=mpegts \
             --enable-parser=hevc \
-            --enable-protocol=file --enable-protocol=pipe
+            --enable-protocol=file --enable-protocol=pipe \
+            --extra-cflags=-fPIC
           make -j$(nproc)
 
       - name: Build and package
