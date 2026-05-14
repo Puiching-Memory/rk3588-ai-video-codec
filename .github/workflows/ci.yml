@@ -67,7 +67,7 @@ jobs:
         run: |
           cd third_party/ffmpeg-rockchip
           ./configure --enable-pic --enable-version3 --disable-everything \
-            --disable-doc --disable-programs --disable-x86asm \
+            --disable-doc --disable-programs --disable-x86asm --disable-asm \
             --disable-avdevice --disable-avfilter --disable-postproc \
             --disable-swscale --disable-swresample --disable-network \
             --enable-rkmpp --enable-libdrm \
@@ -127,7 +127,7 @@ jobs:
         run: |
           cd third_party/ffmpeg-rockchip
           ./configure --enable-pic --enable-version3 --disable-everything \
-            --disable-doc --disable-programs --disable-x86asm \
+            --disable-doc --disable-programs --disable-x86asm --disable-asm \
             --disable-avdevice --disable-avfilter --disable-postproc \
             --disable-swscale --disable-swresample --disable-network \
             --enable-rkmpp --enable-libdrm \
