@@ -54,6 +54,15 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq cmake ninja-build libcmocka-dev nasm libdrm-dev
 
+      - name: Build MPP
+        run: |
+          git clone --depth 1 https://github.com/rockchip-linux/mpp.git /tmp/mpp
+          cd /tmp/mpp
+          cmake -B build -DCMAKE_INSTALL_PREFIX=/usr/local \
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j$(nproc)
+          sudo cmake --install build
+
       - name: Build ffmpeg-rockchip
         run: |
           cd third_party/ffmpeg-rockchip
@@ -103,6 +112,15 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y -qq \
             cmake ninja-build patchelf nasm libdrm-dev
+
+      - name: Build MPP
+        run: |
+          git clone --depth 1 https://github.com/rockchip-linux/mpp.git /tmp/mpp
+          cd /tmp/mpp
+          cmake -B build -DCMAKE_INSTALL_PREFIX=/usr/local \
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j$(nproc)
+          sudo cmake --install build
 
       - name: Build ffmpeg-rockchip
         run: |
