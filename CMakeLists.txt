@@ -151,7 +151,7 @@ endif()
 if(RKVC_BUILD_EXAMPLES)
     set(EXAMPLE_TARGETS "")
 
-    foreach(EXAMPLE encode_file decode_file stream_encode stream_decode transcode)
+    foreach(EXAMPLE encode_file decode_file stream_encode stream_decode transcode latency_test)
         if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/examples/${EXAMPLE}.c")
             add_executable(example_${EXAMPLE} examples/${EXAMPLE}.c)
             target_link_libraries(example_${EXAMPLE} PRIVATE rkvc)

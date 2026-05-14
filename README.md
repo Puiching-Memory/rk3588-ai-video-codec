@@ -18,6 +18,14 @@
 | H.265 解码 | ~270 fps | ~9.0x    |
 | 流式编码   | ~215 fps | ~7.2x    |
 
+## 端到端延迟 (RK3588, 1080p, 低延迟模式)
+
+| 指标           | 编码延迟 | 端到端延迟 |
+| -------------- | -------- | ---------- |
+| 平均           | ~7 ms    | ~69 ms     |
+| P50            | ~7 ms    | ~76 ms     |
+| P95            | ~8 ms    | ~84 ms     |
+
 ## 快速开始 (C 库)
 
 ```bash
@@ -123,7 +131,7 @@ include/rkvc/         # 公共 API 头文件
     stream.h          # 实时流式处理
 lib/                  # 库实现
 bench/                # 基准测试工具
-examples/             # 示例程序 (encode_file, decode_file, transcode, stream_*)
+examples/             # 示例程序 (encode_file, decode_file, transcode, stream_*, latency_test)
 ```
 
 ## 基准测试

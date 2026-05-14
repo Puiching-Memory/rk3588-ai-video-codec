@@ -74,3 +74,17 @@ rkvc_encode --testsrc --stdout -s 640x480 -n 30 | \
   rkvc_decode --stdin --stdout -s 640x480 | wc -c
 # 预期: 640*480*1.5*30 = 13824000
 ```
+
+## 延迟测试
+
+模拟摄像头端到端延迟测试（编码 → 解码全链路）：
+
+```bash
+# 低延迟模式, 1080p@30fps
+./example_latency_test -l
+
+# 自定义分辨率和帧率
+./example_latency_test -s 1280x720 -r 60 -l
+```
+
+输出逐帧延迟明细及统计摘要（P50/P95/P99）。详见 [基准测试](benchmark.md)。
