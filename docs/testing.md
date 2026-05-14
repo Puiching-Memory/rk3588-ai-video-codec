@@ -54,10 +54,10 @@ RKVC_COVERAGE_MIN_LINE=80 RKVC_COVERAGE_MIN_BRANCH=70 ./scripts/test-strict.sh
 
 脚本会生成 `build-coverage/coverage/index.html` 和 `coverage.xml`。在没有 RKMPP 设备节点的环境中，`test_hardware` 会跳过，可使用 `RKVC_COVERAGE_MIN_LINE=60 RKVC_COVERAGE_MIN_BRANCH=50` 作为无硬件基础门禁；在 RK3588 实机交付环境中使用 `80/70`。
 
-Valgrind 默认只跑无硬件依赖的单元测试，因为 Rockchip MPP/FFmpeg 硬件栈会产生第三方库噪声。需要显式审查硬件栈时可运行：
+Valgrind 默认包含 `test_hardware`（`RKVC_VALGRIND_HARDWARE=1`）。第三方 Rockchip MPP/FFmpeg 硬件栈的已知噪声（`Invalid read`、`still reachable`）通过 `scripts/mpp.supp` 自动屏蔽，不会误报为 rkvc 自身缺陷。CI 环境因缺少 RKMPP 设备节点，显式设置 `RKVC_VALGRIND_HARDWARE=0` 跳过硬件测试。如需在无硬件环境中手动跳过：
 
 ```bash
-RKVC_VALGRIND_HARDWARE=1 ./scripts/test-strict.sh
+RKVC_VALGRIND_HARDWARE=0 ./scripts/test-strict.sh
 ```
 
 ## 交付前最低要求
@@ -75,9 +75,9 @@ RKVC_VALGRIND_HARDWARE=1 ./scripts/test-strict.sh
 
 - 源码：`git status --short` 只包含本次交付变更，子模块版本已锁定。
 - 构建：Debug、Release、ASan/UBSan、coverage 构建均成功。
-- 单元：`test_types`、`test_frame`、`test_contracts`、`test_internal`、`test_fault_injection` 全部通过。
+- 单元：`test_types`、`test_frame`、`test_contracts`、`test_internal`、`test_fault_injection`、`test_hardware` 全部通过。
 - 异常：OOM 注入、缺失文件路径、NULL 参数、非法枚举、边界配置均覆盖。
-- 动态：Valgrind 或等价内存工具无泄漏、无越界、无未初始化读取。
+- 动态：Valgrind 或等价内存工具无泄漏、无越界、无未初始化读取（第三方 MPP/FFmpeg 噪声由 `scripts/mpp.supp` 屏蔽）。
 - 覆盖：覆盖率报告已归档，未覆盖区域有解释或后续任务。
 - 硬件：记录 SoC 型号、内核版本、设备节点权限、FFmpeg/MPP 版本、输入样本 SHA256、输出产物 SHA256。
 - 包：SDK/可移植包完整性、RPATH、动态库依赖、头文件和 pkg-config/CMake 包配置均验证。
