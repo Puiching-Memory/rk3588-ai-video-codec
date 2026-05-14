@@ -83,8 +83,8 @@ if(RKVC_BUILD_STATIC)
             ${MPP_INCLUDE_DIR}
             ${CMAKE_CURRENT_SOURCE_DIR}/lib
     )
-    target_link_directories(rkvc_static PRIVATE ${AVCODEC_LIB_DIRS} ${MPP_LIB_DIR})
-    target_link_libraries(rkvc_static PRIVATE ${FFMPEG_LIBS} ${EXTRA_LIBS})
+    target_link_directories(rkvc_static PUBLIC ${AVCODEC_LIB_DIRS} ${MPP_LIB_DIR})
+    target_link_libraries(rkvc_static PUBLIC ${FFMPEG_LIBS} ${EXTRA_LIBS})
     set_target_properties(rkvc_static PROPERTIES OUTPUT_NAME rkvc)
     add_library(rkvc::static ALIAS rkvc_static)
 endif()
