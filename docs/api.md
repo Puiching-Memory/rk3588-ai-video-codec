@@ -9,6 +9,8 @@
     # 输出在 build/docs/html/index.html
     ```
 
+    在线 Doxygen 文档：[API HTML 参考](https://puiching-memory.github.io/rk3588-ai-video-codec/doxygen/)
+
 ## 核心概念
 
 ### 错误处理

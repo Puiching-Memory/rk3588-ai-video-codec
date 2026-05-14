@@ -52,6 +52,7 @@ jobs:
       - name: Build site
         run: |
           zensical build --clean
+          cp -r build/docs/html site/doxygen
           touch site/.nojekyll
 
       - name: Deploy to gh-pages
