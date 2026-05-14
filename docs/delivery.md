@@ -178,13 +178,14 @@ graph TB
 | 依赖              | 版本要求     | 说明                          |
 | ----------------- | ------------ | ----------------------------- |
 | Rockchip BSP 内核 | 5.10 或 6.1  | 提供 VPU 驱动                 |
-| ffmpeg-rockchip   | 源码子模块   | RKMPP 硬件加速的 FFmpeg 分支  |
-| librockchip-mpp   | 系统或子模块 | Media Process Platform 底层库 |
-| libdrm-dev        | 系统包       | DRM/KMS 接口                  |
-| CMake             | >= 3.16      | 构建系统                      |
-| Ninja             | 推荐         | 构建加速（可选）              |
-| GCC / Clang       | C11 支持     | 编译器                        |
-| Criterion         | 可选         | 单元测试框架                  |
+| ffmpeg-rockchip   | 源码子模块   | RKMPP 硬件加速的 FFmpeg 分支       |
+| rockchip-mpp      | 源码子模块   | Media Process Platform，静态链接    |
+| libdrm-dev        | 系统包       | DRM/KMS 接口                       |
+| patchelf          | 系统包       | 可移植包 RPATH 设置                |
+| CMake             | >= 3.16      | 构建系统                           |
+| Ninja             | 推荐         | 构建加速                           |
+| GCC / Clang       | C11 支持     | 编译器                             |
+| CMocka            | 可选         | 单元测试框架                       |
 
 ### 4.3 设备权限
 
@@ -239,31 +240,38 @@ cmake --build build --target rkvc_bench     # 仅基准测试工具
 ### 5.3 手动构建
 
 ```bash
-mkdir build && cd build
-cmake .. -DCMAKE_BUILD_TYPE=Release
-make -j$(nproc)
+git submodule update --init --depth 1
+cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+ninja -C build
 ```
 
 ### 5.4 CMake 构建选项
 
-| 选项                  | 默认值 | 说明                    |
-| --------------------- | ------ | ----------------------- |
-| `RKVC_BUILD_SHARED`   | ON     | 构建共享库 (librkvc.so) |
-| `RKVC_BUILD_STATIC`   | ON     | 构建静态库 (librkvc.a)  |
-| `RKVC_BUILD_EXAMPLES` | ON     | 构建示例程序            |
-| `RKVC_BUILD_TOOLS`    | ON     | 构建 CLI 工具           |
-| `RKVC_BUILD_TESTS`    | OFF    | 构建单元测试            |
-| `RKVC_ENABLE_TIDY`    | OFF    | 启用 clang-tidy 检查    |
-| `RKVC_BUILD_DOCS`     | OFF    | 构建 Doxygen API 文档   |
-| `RKVC_INSTALL`        | ON     | 生成安装目标            |
+| 选项                         | 默认值 | 说明                           |
+| ---------------------------- | ------ | ------------------------------ |
+| `RKVC_BUILD_SHARED`          | ON     | 构建共享库 (librkvc.so)        |
+| `RKVC_BUILD_STATIC`          | ON     | 构建静态库 (librkvc.a)         |
+| `RKVC_BUILD_EXAMPLES`        | ON     | 构建示例程序                   |
+| `RKVC_BUILD_TOOLS`           | ON     | 构建 CLI 工具                  |
+| `RKVC_BUILD_TESTS`           | OFF    | 构建单元测试                   |
+| `RKVC_ENABLE_ASAN`           | OFF    | 启用 AddressSanitizer          |
+| `RKVC_ENABLE_UBSAN`          | OFF    | 启用 UndefinedBehaviorSanitizer|
+| `RKVC_ENABLE_COVERAGE`       | OFF    | 启用 gcov 覆盖率插桩           |
+| `RKVC_ENABLE_FAULT_INJECTION`| OFF    | 启用确定性测试故障注入钩子     |
+| `RKVC_ENABLE_TIDY`           | OFF    | 启用 clang-tidy 检查           |
+| `RKVC_BUILD_DOCS`            | OFF    | 构建 Doxygen API 文档          |
+| `RKVC_INSTALL`               | ON     | 生成安装目标                   |
 
 ### 5.5 CMake Presets 说明
 
-| Preset    | 说明                | 构建目录       |
-| --------- | ------------------- | -------------- |
-| `default` | Release 模式，Ninja | `build/`       |
-| `debug`   | Debug 模式          | `build-debug/` |
-| `tidy`    | clang-tidy 静态分析 | `build-debug/` |
+| Preset      | 说明                     | 构建目录        |
+| ----------- | ------------------------ | --------------- |
+| `default`   | Release 模式，Ninja      | `build/`        |
+| `debug`     | Debug 模式               | `build-debug/`  |
+| `tidy`      | clang-tidy 静态分析      | `build-debug/`  |
+| `tests`     | 单元测试 (Debug, CMocka) | `build-tests/`  |
+| `asan`      | ASan + UBSan 测试        | `build-asan/`   |
+| `coverage`  | gcov 覆盖率测试          | `build-coverage/`|
 
 ### 5.6 安装
 
@@ -306,7 +314,9 @@ gcc -o myapp myapp.c $(pkg-config --cflags --libs rkvc)
 
 ```cmake
 find_package(rkvc REQUIRED)
-target_link_libraries(myapp PRIVATE rkvc::rkvc)
+target_link_libraries(myapp PRIVATE rkvc::shared)  # 共享库
+# 或
+target_link_libraries(myapp PRIVATE rkvc::static)  # 静态库
 ```
 
 ---
@@ -368,6 +378,7 @@ LD_LIBRARY_PATH=lib ./myapp
 **可复现性保证**:
 
 - ffmpeg-rockchip: 从 `third_party/ffmpeg-rockchip/` 子模块源码构建
+- rockchip-mpp: 从 `third_party/mpp/` 子模块源码构建，静态链接进 librkvc
 - rkvc: 从项目源码构建
 - 不依赖系统预装的任何库
 
@@ -384,7 +395,7 @@ ninja -C build package
 sudo dpkg -i build/packages/rkvc_0.1.0_arm64.deb
 ```
 
-> **注意**: DEB 包依赖系统上的 ffmpeg-rockchip 和 librockchip-mpp。
+> **注意**: DEB 包依赖系统上的 ffmpeg-rockchip 和 librockchip-mpp（rockchip-mpp 从 `third_party/mpp/` 源码构建）。
 
 ### 6.3 CPack TGZ
 

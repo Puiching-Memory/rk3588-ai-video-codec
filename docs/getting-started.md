@@ -3,10 +3,13 @@
 ## 环境要求
 
 - Rockchip BSP 内核 (5.10 或 6.1)
-- [ffmpeg-rockchip](https://github.com/nyanmisaka/ffmpeg-rockchip) 安装在 `/usr/local/ffmpeg-rockchip`
-- libdrm-dev
-- CMake >= 3.16
-- CMocka (测试框架，可选)
+- libdrm-dev、patchelf（可移植包打包依赖）
+- CMake >= 3.16、Ninja（推荐）
+- GCC / Clang（C11 支持）
+- CMocka（测试框架，可选）
+
+!!! note
+    ffmpeg-rockchip 和 rockchip-mpp 均从 `third_party/` 子模块源码构建，无需系统预装。
 
 ## 设备权限
 
@@ -18,14 +21,16 @@ sudo chmod 666 /dev/dri/*
 ## 构建
 
 ```bash
+# 确保子模块已初始化
+git submodule update --init --depth 1
+
 # 使用 CMake Presets (推荐)
 cmake --preset default
 cmake --build build
 
 # 或手动构建
-mkdir build && cd build
-cmake .. -DCMAKE_BUILD_TYPE=Release
-make -j$(nproc)
+cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+ninja -C build
 ```
 
 ## 运行测试

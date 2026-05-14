@@ -55,6 +55,7 @@ LD_LIBRARY_PATH=lib ./myapp
 所有二进制从源码构建：
 
 - **ffmpeg-rockchip**: `third_party/ffmpeg-rockchip/` 子模块 (shallow clone)
+- **rockchip-mpp**: `third_party/mpp/` 子模块，静态链接进 librkvc
 - **rkvc**: 项目源码
 - 不依赖系统预装的任何库
 
@@ -72,7 +73,7 @@ sudo dpkg -i build/packages/rkvc_0.1.0_arm64.deb
 ```
 
 !!! note
-    DEB 包依赖系统上的 ffmpeg-rockchip 和 librockchip-mpp。
+    DEB 包依赖系统上的 ffmpeg-rockchip 和 librockchip-mpp (rockchip-mpp 从 `third_party/mpp/` 源码构建)。
 
 ## CPack TGZ
 
