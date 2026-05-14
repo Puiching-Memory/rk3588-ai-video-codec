@@ -150,6 +150,7 @@ EOF
 
     cp "$PROJECT_DIR/README.md" "$OUT_DIR/$PKG_NAME/" 2>/dev/null || true
     cp "$PROJECT_DIR/LICENSE" "$OUT_DIR/$PKG_NAME/" 2>/dev/null || true
+    cp -r "$PROJECT_DIR/docs" "$OUT_DIR/$PKG_NAME/" 2>/dev/null || true
 
     cd "$OUT_DIR"
     tar czf "$PKG_NAME.tar.gz" "$PKG_NAME"
