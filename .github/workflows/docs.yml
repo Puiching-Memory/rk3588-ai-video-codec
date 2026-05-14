@@ -5,6 +5,15 @@ on:
     branches:
       - master
       - main
+    paths:
+      - .github/workflows/docs.yml
+      - CMakeLists.txt
+      - Doxyfile.in
+      - README.md
+      - zensical.toml
+      - docs/**
+      - include/rkvc/**
+      - lib/**
   workflow_dispatch:
 
 permissions:
