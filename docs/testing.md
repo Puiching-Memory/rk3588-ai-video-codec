@@ -54,7 +54,14 @@ RKVC_COVERAGE_MIN_LINE=80 RKVC_COVERAGE_MIN_BRANCH=70 ./scripts/test-strict.sh
 
 脚本会生成 `build-coverage/coverage/index.html` 和 `coverage.xml`。在没有 RKMPP 设备节点的环境中，`test_hardware` 会跳过，可使用 `RKVC_COVERAGE_MIN_LINE=60 RKVC_COVERAGE_MIN_BRANCH=50` 作为无硬件基础门禁；在 RK3588 实机交付环境中使用 `80/70`。
 
-Valgrind 默认包含 `test_hardware`（`RKVC_VALGRIND_HARDWARE=1`）。第三方 Rockchip MPP/FFmpeg 硬件栈的已知噪声（`Invalid read`、`still reachable`）通过 `scripts/mpp.supp` 自动屏蔽，不会误报为 rkvc 自身缺陷。CI 环境因缺少 RKMPP 设备节点，显式设置 `RKVC_VALGRIND_HARDWARE=0` 跳过硬件测试。如需在无硬件环境中手动跳过：
+Valgrind 默认包含 `test_hardware`（`RKVC_VALGRIND_HARDWARE=1`）。已知的第三方 MPP/FFmpeg 问题通过 `scripts/mpp.supp` 屏蔽，包括：
+
+- `kmpp_obj_update` 越界读取（MPP 解码器对象池 bug）
+- FFmpeg 硬件上下文 `still reachable`（设计如此，全局单例不释放）
+- 运行时 `get_packet_async` 返回 NULL（MPP 异步流水线正常行为）
+- 运行时 `mpp_mem_pool_put` nil 指针（MPP 内存管理已知缺陷）
+
+以上均不影响编码/解码正确性，上游跟踪：https://github.com/rockchip-linux/mpp/issues。CI 环境因缺少 RKMPP 设备节点，显式设置 `RKVC_VALGRIND_HARDWARE=0` 跳过硬件测试。如需在无硬件环境中手动跳过：
 
 ```bash
 RKVC_VALGRIND_HARDWARE=0 ./scripts/test-strict.sh

@@ -80,7 +80,7 @@ TMPDIR=$(mktemp -d)
 trap "rm -rf $TMPDIR" EXIT
 
 enc_out=$(LD_LIBRARY_PATH="$PKG_DIR/lib" "$PKG_DIR/bin/rkvc_encode" \
-    --testsrc -o "$TMPDIR/test.h265" -s 640x480 -n 10 2>&1 || true)
+    --testsrc -o "$TMPDIR/test.h265" -s 640x480 -n 10 -v 2>&1 || true)
 if echo "$enc_out" | grep -q "编码完成"; then
     frames=$(echo "$enc_out" | grep "编码完成" | grep -oP '\d+ 帧')
     pass "rkvc_encode: $frames"
@@ -91,7 +91,7 @@ fi
 # 6. 解码测试
 if [ -f "$TMPDIR/test.h265" ]; then
     dec_out=$(LD_LIBRARY_PATH="$PKG_DIR/lib" "$PKG_DIR/bin/rkvc_decode" \
-        -i "$TMPDIR/test.h265" 2>&1 || true)
+        -i "$TMPDIR/test.h265" -v 2>&1 || true)
     if echo "$dec_out" | grep -q "解码完成"; then
         frames=$(echo "$dec_out" | grep "解码完成" | grep -oP '\d+ 帧')
         pass "rkvc_decode: $frames"

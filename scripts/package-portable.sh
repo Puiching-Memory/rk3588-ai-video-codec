@@ -112,7 +112,7 @@ package() {
         [[ -f "$RKVC_BUILD/$so" ]] && cp -a "$RKVC_BUILD/$so" "$OUT_DIR/$PKG_NAME/lib/"
     done
 
-    echo "--- 复制 ffmpeg 动态库 ---"
+    echo "--- 复制 ffmpeg 动态库 (仅限自行编译产出) ---"
     for lib in "$FFMPEG_PREFIX/lib/"lib*.so.*; do
         [[ -f "$lib" ]] || continue
         [[ -L "$lib" ]] && continue
@@ -155,10 +155,21 @@ EOF
     tar czf "$PKG_NAME.tar.gz" "$PKG_NAME"
     echo "  产物: $OUT_DIR/$PKG_NAME.tar.gz ($(du -h "$PKG_NAME.tar.gz" | cut -f1))"
 
-    echo "--- 验证 ---"
-    (cd "$PKG_NAME" && LD_LIBRARY_PATH=lib ldd bin/rkvc_info 2>&1 | \
-        grep "not found" && echo "  警告: 存在未满足的依赖!" || \
-        echo "  所有依赖已满足")
+    echo "--- 验证自包含库 ---"
+    local unresolved=0
+    (cd "$PKG_NAME" && LD_LIBRARY_PATH=lib ldd bin/rkvc_info 2>&1) | while read -r line; do
+        if echo "$line" | grep -q "not found"; then
+            echo "  错误: $line"
+            unresolved=1
+        fi
+    done
+
+    echo "--- 目标板前置依赖 (须由系统包管理器提供) ---"
+    echo "  librockchip-mpp1  (RKMPP 硬件编解码)"
+    echo "  libdrm2           (DRM 渲染)"
+    echo "  librga            (Rockchip 2D 加速, 可选)"
+    echo ""
+    echo "  安装示例: sudo apt install librockchip-mpp-dev libdrm-dev"
 }
 
 main() {
