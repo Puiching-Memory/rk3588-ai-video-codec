@@ -20,32 +20,25 @@ option(RKVC_BUILD_DOCS     "Build Doxygen API docs"    OFF)
 option(RKVC_INSTALL        "Generate install targets"   ON)
 
 # ── FFmpeg (ffmpeg-rockchip) ──────────────────────────────────────────
-# 优先使用 /usr/local/ffmpeg-rockchip
-set(FFMPEG_ROOT "/usr/local/ffmpeg-rockchip" CACHE PATH "Path to ffmpeg-rockchip installation")
+# 始终使用 third_party/ 源码树构建的静态库
+set(AVCODEC_INCLUDE_DIRS "${CMAKE_SOURCE_DIR}/third_party/ffmpeg-rockchip")
+set(AVCODEC_LIB_DIRS
+    "${CMAKE_SOURCE_DIR}/third_party/ffmpeg-rockchip/libavcodec"
+    "${CMAKE_SOURCE_DIR}/third_party/ffmpeg-rockchip/libavformat"
+    "${CMAKE_SOURCE_DIR}/third_party/ffmpeg-rockchip/libavutil"
+)
 
-if(EXISTS "${FFMPEG_ROOT}/include/libavcodec/avcodec.h")
-    # 已安装的 ffmpeg-rockchip (make install 后)
-    message(STATUS "Using installed ffmpeg-rockchip from ${FFMPEG_ROOT}")
-    set(AVCODEC_INCLUDE_DIRS "${FFMPEG_ROOT}/include")
-    set(AVCODEC_LIB_DIRS     "${FFMPEG_ROOT}/lib")
-elseif(EXISTS "${CMAKE_SOURCE_DIR}/third_party/ffmpeg-rockchip/libavcodec/avcodec.h")
-    # 源码树 (未 make install，直接使用 third_party/)
-    message(STATUS "Using ffmpeg-rockchip from third_party/ source tree")
-    set(AVCODEC_INCLUDE_DIRS "${CMAKE_SOURCE_DIR}/third_party/ffmpeg-rockchip")
-    set(AVCODEC_LIB_DIRS
-        "${CMAKE_SOURCE_DIR}/third_party/ffmpeg-rockchip/libavcodec"
-        "${CMAKE_SOURCE_DIR}/third_party/ffmpeg-rockchip/libavformat"
-        "${CMAKE_SOURCE_DIR}/third_party/ffmpeg-rockchip/libavutil"
-    )
-else()
-    # Fallback: 用 pkg-config
-    find_package(PkgConfig REQUIRED)
-    pkg_check_modules(AVCODEC  REQUIRED libavcodec)
-    pkg_check_modules(AVFORMAT REQUIRED libavformat)
-    pkg_check_modules(AVUTIL   REQUIRED libavutil)
-endif()
+# ── MPP (rockchip mpp) ───────────────────────────────────────────────
+# 始终使用 third_party/ 源码树构建的静态库
+set(MPP_BUILD_DIR "${CMAKE_BINARY_DIR}/mpp_build" CACHE PATH "MPP build output directory")
+set(MPP_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/third_party/mpp/inc")
+set(MPP_LIB_DIR "${MPP_BUILD_DIR}/mpp")
 
 # ── 源文件 ─────────────────────────────────────────────────────────────
+# FFmpeg 静态库存在循环依赖，需要用 --start-group/--end-group 包裹
+set(FFMPEG_LIBS -Wl,--start-group avcodec avformat avutil -Wl,--end-group)
+# 外部依赖：MPP、zlib、drm
+set(EXTRA_LIBS rockchip_mpp z drm pthread m)
 set(RKVC_SOURCES
     lib/init.c
     lib/frame.c
@@ -64,10 +57,11 @@ if(RKVC_BUILD_SHARED)
             $<INSTALL_INTERFACE:include>
         PRIVATE
             ${AVCODEC_INCLUDE_DIRS}
+            ${MPP_INCLUDE_DIR}
             ${CMAKE_CURRENT_SOURCE_DIR}/lib
     )
-    target_link_directories(rkvc_shared PRIVATE ${AVCODEC_LIB_DIRS})
-    target_link_libraries(rkvc_shared PRIVATE avcodec avformat avutil pthread m)
+    target_link_directories(rkvc_shared PRIVATE ${AVCODEC_LIB_DIRS} ${MPP_LIB_DIR})
+    target_link_libraries(rkvc_shared PRIVATE ${FFMPEG_LIBS} ${EXTRA_LIBS})
     set_target_properties(rkvc_shared PROPERTIES
         OUTPUT_NAME rkvc
         VERSION     ${PROJECT_VERSION}
@@ -86,10 +80,11 @@ if(RKVC_BUILD_STATIC)
             $<INSTALL_INTERFACE:include>
         PRIVATE
             ${AVCODEC_INCLUDE_DIRS}
+            ${MPP_INCLUDE_DIR}
             ${CMAKE_CURRENT_SOURCE_DIR}/lib
     )
-    target_link_directories(rkvc_static PRIVATE ${AVCODEC_LIB_DIRS})
-    target_link_libraries(rkvc_static PRIVATE avcodec avformat avutil pthread m)
+    target_link_directories(rkvc_static PRIVATE ${AVCODEC_LIB_DIRS} ${MPP_LIB_DIR})
+    target_link_libraries(rkvc_static PRIVATE ${FFMPEG_LIBS} ${EXTRA_LIBS})
     set_target_properties(rkvc_static PROPERTIES OUTPUT_NAME rkvc)
     add_library(rkvc::static ALIAS rkvc_static)
 endif()

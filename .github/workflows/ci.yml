@@ -56,12 +56,9 @@ jobs:
 
       - name: Build MPP
         run: |
-          git clone --depth 1 https://github.com/rockchip-linux/mpp.git /tmp/mpp
-          cd /tmp/mpp
-          cmake -B build -DCMAKE_INSTALL_PREFIX=/usr/local \
+          cmake -B /tmp/mpp-build -S third_party/mpp \
             -DCMAKE_BUILD_TYPE=Release
-          cmake --build build -j$(nproc)
-          sudo cmake --install build
+          cmake --build /tmp/mpp-build -j$(nproc)
 
       - name: Build ffmpeg-rockchip
         run: |
@@ -83,7 +80,8 @@ jobs:
         run: |
           cmake -B build -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
-            -DRKVC_BUILD_TESTS=ON
+            -DRKVC_BUILD_TESTS=ON \
+            -DMPP_BUILD_DIR=/tmp/mpp-build
 
       - name: Build
         run: ninja -C build
@@ -115,12 +113,9 @@ jobs:
 
       - name: Build MPP
         run: |
-          git clone --depth 1 https://github.com/rockchip-linux/mpp.git /tmp/mpp
-          cd /tmp/mpp
-          cmake -B build -DCMAKE_INSTALL_PREFIX=/usr/local \
+          cmake -B /tmp/mpp-build -S third_party/mpp \
             -DCMAKE_BUILD_TYPE=Release
-          cmake --build build -j$(nproc)
-          sudo cmake --install build
+          cmake --build /tmp/mpp-build -j$(nproc)
 
       - name: Build ffmpeg-rockchip
         run: |
@@ -140,7 +135,7 @@ jobs:
 
       - name: Build and package
         run: |
-          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DMPP_BUILD_DIR=/tmp/mpp-build
           ninja -C build package
 
       - name: Upload packages
