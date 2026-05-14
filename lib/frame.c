@@ -16,13 +16,13 @@ rkvc_err rkvc_frame_alloc(rkvc_frame **out, int width, int height,
     if (width <= 0 || height <= 0 || !rkvc_is_valid_pix_fmt(format))
         return RKVC_ERR_INVALID;
 
-    rkvc_frame *f = calloc(1, sizeof(*f));
+    rkvc_frame *f = rkvc_calloc(1, sizeof(*f));
     if (!f)
         return RKVC_ERR_NOMEM;
 
     f->av_frame = av_frame_alloc();
     if (!f->av_frame) {
-        free(f);
+        rkvc_free(f);
         return RKVC_ERR_NOMEM;
     }
 
@@ -33,7 +33,7 @@ rkvc_err rkvc_frame_alloc(rkvc_frame **out, int width, int height,
     int ret = av_frame_get_buffer(f->av_frame, 0);
     if (ret < 0) {
         av_frame_free(&f->av_frame);
-        free(f);
+        rkvc_free(f);
         return rkvc_from_averror(ret);
     }
 
@@ -105,6 +105,6 @@ void rkvc_frame_unref(rkvc_frame *f)
     if (do_free) {
         av_frame_free(&f->av_frame);
         pthread_mutex_destroy(&f->lock);
-        free(f);
+        rkvc_free(f);
     }
 }

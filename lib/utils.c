@@ -6,6 +6,81 @@
 #include "internal.h"
 #include <pthread.h>
 
+/* ── Project-owned allocation wrappers ─────────────────────────────── */
+
+#ifdef RKVC_ENABLE_FAULT_INJECTION
+static pthread_mutex_t s_alloc_fault_lock = PTHREAD_MUTEX_INITIALIZER;
+static long s_alloc_count = 0;
+static long s_alloc_fail_after = -1;
+
+static int rkvc_should_fail_alloc(void)
+{
+    int should_fail = 0;
+
+    pthread_mutex_lock(&s_alloc_fault_lock);
+    s_alloc_count++;
+    if (s_alloc_fail_after >= 0) {
+        if (s_alloc_fail_after == 0) {
+            should_fail = 1;
+        } else {
+            s_alloc_fail_after--;
+        }
+    }
+    pthread_mutex_unlock(&s_alloc_fault_lock);
+
+    return should_fail;
+}
+
+void rkvc_test_fail_alloc_after(long countdown)
+{
+    pthread_mutex_lock(&s_alloc_fault_lock);
+    s_alloc_fail_after = countdown < 0 ? -1 : countdown;
+    pthread_mutex_unlock(&s_alloc_fault_lock);
+}
+
+void rkvc_test_clear_faults(void)
+{
+    pthread_mutex_lock(&s_alloc_fault_lock);
+    s_alloc_fail_after = -1;
+    pthread_mutex_unlock(&s_alloc_fault_lock);
+}
+
+long rkvc_test_alloc_count(void)
+{
+    long count;
+
+    pthread_mutex_lock(&s_alloc_fault_lock);
+    count = s_alloc_count;
+    pthread_mutex_unlock(&s_alloc_fault_lock);
+
+    return count;
+}
+#else
+static int rkvc_should_fail_alloc(void)
+{
+    return 0;
+}
+#endif
+
+void *rkvc_malloc(size_t size)
+{
+    if (rkvc_should_fail_alloc())
+        return NULL;
+    return malloc(size);
+}
+
+void *rkvc_calloc(size_t nmemb, size_t size)
+{
+    if (rkvc_should_fail_alloc())
+        return NULL;
+    return calloc(nmemb, size);
+}
+
+void rkvc_free(void *ptr)
+{
+    free(ptr);
+}
+
 /* ── FFmpeg 错误码映射 ─────────────────────────────────────────────── */
 
 rkvc_err rkvc_from_averror(int av_err)
@@ -145,7 +220,7 @@ rkvc_frame *rkvc_frame_wrap_avframe(AVFrame *av_frame)
     if (!av_frame)
         return NULL;
 
-    rkvc_frame *f = calloc(1, sizeof(*f));
+    rkvc_frame *f = rkvc_calloc(1, sizeof(*f));
     if (!f)
         return NULL;
 

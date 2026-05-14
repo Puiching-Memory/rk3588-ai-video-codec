@@ -34,7 +34,7 @@ cmake --install . --prefix /usr/local
 
 ## 严格测试
 
-本项目把测试分成可重复执行的三个层次，思路参考 SQLite：优先做确定性契约测试，再做异常与未定义行为检查，最后做覆盖率度量。
+本项目把测试分成可重复执行的多层门禁，思路参考 SQLite：确定性契约测试、OOM/I/O 异常路径、ASan/UBSan 动态分析、覆盖率度量和实机交付验证。
 
 ```bash
 # 基线单元测试
@@ -54,7 +54,12 @@ ctest --preset coverage
 
 # 一键严格模式
 ./scripts/test-strict.sh
+
+# RK3588 实机覆盖率阈值（需要 gcovr）
+RKVC_COVERAGE_MIN_LINE=80 RKVC_COVERAGE_MIN_BRANCH=70 ./scripts/test-strict.sh
 ```
+
+`test_hardware` 会自动探测 RKMPP 设备节点；在非实机环境中跳过，在 RK3588 实机上执行真实 H.265 硬件编码/解码往返。
 
 更详细的测试策略见 [docs/testing.md](docs/testing.md)。
 

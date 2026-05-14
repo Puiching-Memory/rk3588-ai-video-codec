@@ -54,6 +54,13 @@ static const char *guess_muxer(const char *path)
     return "hevc";
 }
 
+#ifdef RKVC_ENABLE_FAULT_INJECTION
+const char *rkvc_test_guess_muxer(const char *path)
+{
+    return guess_muxer(path);
+}
+#endif
+
 /* ── 内部: 配置编码器上下文 ────────────────────────────────────────── */
 
 static rkvc_err validate_encoder_config(const rkvc_encoder_config *cfg)
@@ -75,6 +82,13 @@ static rkvc_err validate_encoder_config(const rkvc_encoder_config *cfg)
         return RKVC_ERR_INVALID;
 
     return RKVC_OK;
+}
+
+static void set_codec_option(AVCodecContext *ctx, const char *key,
+                             const char *value)
+{
+    if (ctx->priv_data)
+        av_opt_set(ctx->priv_data, key, value, 0);
 }
 
 static rkvc_err setup_codec(AVCodecContext *ctx,
@@ -106,31 +120,39 @@ static rkvc_err setup_codec(AVCodecContext *ctx,
     /* 编码器私有选项 (通过 AVOption 设置, 忽略不支持的选项) */
     switch (cfg->preset) {
     case RKVC_PRESET_FAST:
-        av_opt_set(ctx->priv_data, "preset", "fast", 0);
+        set_codec_option(ctx, "preset", "fast");
         break;
     case RKVC_PRESET_SLOW:
-        av_opt_set(ctx->priv_data, "preset", "slow", 0);
+        set_codec_option(ctx, "preset", "slow");
         break;
     default:
-        av_opt_set(ctx->priv_data, "preset", "medium", 0);
+        set_codec_option(ctx, "preset", "medium");
         break;
     }
 
     switch (cfg->rc_mode) {
     case RKRC_VBR:
-        av_opt_set(ctx->priv_data, "rc_mode", "VBR", 0);
+        set_codec_option(ctx, "rc_mode", "VBR");
         break;
     case RKRC_CQP:
-        av_opt_set(ctx->priv_data, "rc_mode", "CQP", 0);
+        set_codec_option(ctx, "rc_mode", "CQP");
         ctx->global_quality = cfg->qp;
         break;
     default:
-        av_opt_set(ctx->priv_data, "rc_mode", "CBR", 0);
+        set_codec_option(ctx, "rc_mode", "CBR");
         break;
     }
 
     return RKVC_OK;
 }
+
+#ifdef RKVC_ENABLE_FAULT_INJECTION
+rkvc_err rkvc_test_setup_encoder_codec(AVCodecContext *ctx,
+                                       const rkvc_encoder_config *cfg)
+{
+    return setup_codec(ctx, cfg);
+}
+#endif
 
 /* ── 内部: 创建硬件帧上下文 ───────────────────────────────────────── */
 
@@ -174,6 +196,74 @@ static rkvc_err create_hw_frames_ctx(AVCodecContext *ctx,
 
 /* ── 编码器打开 ────────────────────────────────────────────────────── */
 
+static rkvc_err buffer_plane_layout(const rkvc_encoder_config *cfg,
+                                    int linesize,
+                                    int plane_heights[4],
+                                    int copy_bytes[4],
+                                    int src_linesizes[4])
+{
+    enum AVPixelFormat fmt = rkvc_to_av_pix_fmt(cfg->input_format);
+    int width = cfg->width;
+    int height = cfg->height;
+
+    if (linesize <= 0)
+        return RKVC_ERR_INVALID;
+
+    memset(plane_heights, 0, sizeof(int) * 4);
+    memset(copy_bytes, 0, sizeof(int) * 4);
+    memset(src_linesizes, 0, sizeof(int) * 4);
+
+    switch (fmt) {
+    case AV_PIX_FMT_NV12:
+        if (linesize < width)
+            return RKVC_ERR_INVALID;
+        plane_heights[0] = height;
+        plane_heights[1] = height / 2;
+        copy_bytes[0] = width;
+        copy_bytes[1] = width;
+        src_linesizes[0] = linesize;
+        src_linesizes[1] = linesize;
+        break;
+    case AV_PIX_FMT_YUV420P:
+        if (linesize < width)
+            return RKVC_ERR_INVALID;
+        plane_heights[0] = height;
+        plane_heights[1] = height / 2;
+        plane_heights[2] = height / 2;
+        copy_bytes[0] = width;
+        copy_bytes[1] = width / 2;
+        copy_bytes[2] = width / 2;
+        src_linesizes[0] = linesize;
+        src_linesizes[1] = linesize / 2;
+        src_linesizes[2] = linesize / 2;
+        break;
+    case AV_PIX_FMT_NV16:
+        if (linesize < width)
+            return RKVC_ERR_INVALID;
+        plane_heights[0] = height;
+        plane_heights[1] = height;
+        copy_bytes[0] = width;
+        copy_bytes[1] = width;
+        src_linesizes[0] = linesize;
+        src_linesizes[1] = linesize;
+        break;
+    case AV_PIX_FMT_P010:
+        if (linesize < width * 2)
+            return RKVC_ERR_INVALID;
+        plane_heights[0] = height;
+        plane_heights[1] = height / 2;
+        copy_bytes[0] = width * 2;
+        copy_bytes[1] = width * 2;
+        src_linesizes[0] = linesize;
+        src_linesizes[1] = linesize;
+        break;
+    default:
+        return RKVC_ERR_INVALID;
+    }
+
+    return RKVC_OK;
+}
+
 static rkvc_err encoder_open_internal(rkvc_encoder **out,
                                       const rkvc_encoder_config *cfg,
                                       const char *output_path)
@@ -189,7 +279,7 @@ static rkvc_err encoder_open_internal(rkvc_encoder **out,
 
     rkvc_init();
 
-    rkvc_encoder *enc = calloc(1, sizeof(*enc));
+    rkvc_encoder *enc = rkvc_calloc(1, sizeof(*enc));
     if (!enc)
         return RKVC_ERR_NOMEM;
 
@@ -383,47 +473,38 @@ rkvc_err rkvc_encoder_send_buffer(rkvc_encoder *enc,
     if (!enc || !data)
         return RKVC_ERR_INVALID;
 
+    int plane_heights[4];
+    int copy_bytes[4];
+    int src_linesize[4];
+    rkvc_err err = buffer_plane_layout(&enc->config, linesize,
+                                       plane_heights, copy_bytes,
+                                       src_linesize);
+    if (err != RKVC_OK)
+        return err;
+
     rkvc_frame *f = NULL;
-    rkvc_err err = rkvc_frame_alloc(&f, enc->config.width,
-                                    enc->config.height,
-                                    enc->config.input_format);
+    err = rkvc_frame_alloc(&f, enc->config.width,
+                           enc->config.height,
+                           enc->config.input_format);
     if (err != RKVC_OK)
         return err;
 
     /* 复制像素数据 */
     AVFrame *dst = f->av_frame;
     const uint8_t *src_data[4] = {NULL, NULL, NULL, NULL};
-    int src_linesize[4] = {0, 0, 0, 0};
-
-    enum AVPixelFormat fmt = rkvc_to_av_pix_fmt(enc->config.input_format);
-    int num_planes = 1;
-    if (fmt == AV_PIX_FMT_NV12 || fmt == AV_PIX_FMT_P010)
-        num_planes = 2;
-    else if (fmt == AV_PIX_FMT_YUV420P)
-        num_planes = 3;
 
     src_data[0] = data;
-    src_linesize[0] = linesize;
-
-    /* 估算其他平面 */
-    if (num_planes >= 2) {
-        src_data[1] = data + linesize * enc->config.height;
-        src_linesize[1] = linesize;
-    }
-    if (num_planes >= 3) {
-        src_data[2] = data + linesize * enc->config.height * 5 / 4;
-        src_linesize[2] = linesize / 2;
+    for (int i = 1; i < 4 && plane_heights[i] > 0; i++) {
+        src_data[i] = src_data[i - 1] +
+                      src_linesize[i - 1] * plane_heights[i - 1];
     }
 
-    for (int i = 0; i < num_planes; i++) {
+    for (int i = 0; i < 4 && plane_heights[i] > 0; i++) {
         if (dst->data[i]) {
-            int h = enc->config.height;
-            if (i >= 1 && fmt == AV_PIX_FMT_YUV420P)
-                h /= 2;
-            for (int row = 0; row < h; row++) {
+            for (int row = 0; row < plane_heights[i]; row++) {
                 memcpy(dst->data[i] + row * dst->linesize[i],
                        src_data[i] + row * src_linesize[i],
-                       src_linesize[i]);
+                       copy_bytes[i]);
             }
         }
     }
@@ -546,7 +627,7 @@ rkvc_err rkvc_encoder_close(rkvc_encoder *enc)
         av_buffer_unref(&enc->hw_device_ctx);
 
     pthread_mutex_destroy(&enc->lock);
-    free(enc);
+    rkvc_free(enc);
     return RKVC_OK;
 }
 

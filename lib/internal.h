@@ -44,6 +44,21 @@
 /** FFmpeg error → rkvc_err */
 rkvc_err rkvc_from_averror(int av_err);
 
+/** Project-owned allocation wrappers, used to enable deterministic tests. */
+void *rkvc_malloc(size_t size);
+void *rkvc_calloc(size_t nmemb, size_t size);
+void rkvc_free(void *ptr);
+
+#ifdef RKVC_ENABLE_FAULT_INJECTION
+/** Test-only allocation fault controls. countdown=0 fails the next wrapper allocation. */
+void rkvc_test_fail_alloc_after(long countdown);
+void rkvc_test_clear_faults(void);
+long rkvc_test_alloc_count(void);
+const char *rkvc_test_guess_muxer(const char *path);
+rkvc_err rkvc_test_setup_encoder_codec(AVCodecContext *ctx,
+                                       const rkvc_encoder_config *cfg);
+#endif
+
 /** 获取 FFmpeg RKMPP 硬件设备上下文 (单例, 线程安全) */
 rkvc_err rkvc_get_hw_device_ctx(AVBufferRef **out);
 

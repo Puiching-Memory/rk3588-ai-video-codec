@@ -42,6 +42,7 @@
                 "RKVC_BUILD_EXAMPLES": "OFF",
                 "RKVC_BUILD_TOOLS": "OFF",
                 "RKVC_BUILD_TESTS": "ON",
+                "RKVC_ENABLE_FAULT_INJECTION": "ON",
                 "RKVC_INSTALL": "OFF"
             }
         },

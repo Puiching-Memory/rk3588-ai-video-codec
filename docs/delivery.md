@@ -23,6 +23,7 @@
 12. [已知限制与注意事项](#12-已知限制与注意事项)
 13. [故障排查](#13-故障排查)
 14. [许可与第三方组件](#14-许可与第三方组件)
+15. [测试与质量门禁](#15-测试与质量门禁)
 
 ---
 
@@ -1083,10 +1084,14 @@ rk3588-ai-video-codec/
 │
 ├── tests/                      # 单元测试
 │   ├── test_frame.c            # 帧管理测试
+│   ├── test_contracts.c        # 公共 API 契约和异常路径测试
+│   ├── test_internal.c         # 内部映射/转换一致性测试
+│   ├── test_fault_injection.c  # OOM 故障注入测试
 │   └── test_types.c            # 类型定义测试
 │
 ├── scripts/                    # 构建/打包脚本
 │   ├── package-portable.sh     # 可移植包构建
+│   ├── test-strict.sh          # 严格测试矩阵
 │   └── test-portable.sh        # 可移植包测试
 │
 ├── docs/                       # 文档
@@ -1187,6 +1192,35 @@ export RKVC_LOG_LEVEL=debug
 - 可移植包包含 LGPL 编译的 ffmpeg-rockchip 动态库
 - 静态链接 ffmpeg 的场景需注意 GPL 合规性
 - 商业使用建议咨询法务团队
+
+---
+
+## 15. 测试与质量门禁
+
+本项目按 SQLite 的测试哲学强化交付门禁：契约测试先行，异常路径必须可重复，动态分析和覆盖率用于反查测试集盲区，硬件链路单独留证。
+
+### 15.1 自动化测试矩阵
+
+| 矩阵         | 覆盖内容                                       | 命令                                                         |
+| ------------ | ---------------------------------------------- | ------------------------------------------------------------ |
+| 基线单元测试 | 类型、帧生命周期、API 契约、内部映射、OOM 注入 | `cmake --preset tests && cmake --build --preset tests`       |
+| ASan/UBSan   | 越界、use-after-free、未定义行为               | `cmake --preset asan && cmake --build --preset asan`         |
+| 覆盖率插桩   | gcov 覆盖率数据和测试盲区分析                  | `cmake --preset coverage && cmake --build --preset coverage` |
+| 硬件集成     | RKMPP H.265 编码/解码文件往返                  | `ctest --preset tests -R test_hardware --output-on-failure`  |
+| 严格模式     | 顺序运行全部矩阵，自动附加 Valgrind/gcovr      | `./scripts/test-strict.sh`                                   |
+| 可移植包     | 二进制完整性、动态库依赖、CLI 功能、开发文件   | `./scripts/test-portable.sh <package-dir>`                   |
+
+`RKVC_ENABLE_FAULT_INJECTION` 只在测试 preset 中打开，用于确定性模拟项目自有分配失败；Release/交付构建默认不包含测试钩子。`test_hardware` 会自动探测 RKMPP 设备节点，不可用时 CTest skip，RK3588 实机交付时必须实际通过。
+
+### 15.2 关键客户交付最低要求
+
+- `./scripts/test-strict.sh` 全部通过。
+- 安装 Valgrind 的环境下，所有 `build-tests/test_*` 必须无泄漏、无越界、无未初始化读取。
+- 安装 gcovr 的环境下，归档 `build-coverage/coverage/index.html` 和 `coverage.xml`；RK3588 实机门禁为 `RKVC_COVERAGE_MIN_LINE=80`、`RKVC_COVERAGE_MIN_BRANCH=70`。
+- Valgrind 默认覆盖无硬件依赖的 `test_*`；如需审查第三方 RKMPP/FFmpeg 硬件栈，使用 `RKVC_VALGRIND_HARDWARE=1` 单独运行并留存外部库告警。
+- 固定样本在 RK3588 实机完成编码、解码、stdin/stdout 管道和长时间 soak test。
+- 留存 SoC 型号、内核版本、设备节点权限、FFmpeg/MPP 版本、输入/输出样本 SHA256、测试日志和包哈希。
+- 每个缺陷修复必须附带回归测试；不能自动化复现的缺陷必须加入发布清单。
 
 ---
 

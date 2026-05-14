@@ -54,7 +54,7 @@ static rkvc_err decoder_open_internal(rkvc_decoder **out,
 
     rkvc_init();
 
-    rkvc_decoder *dec = calloc(1, sizeof(*dec));
+    rkvc_decoder *dec = rkvc_calloc(1, sizeof(*dec));
     if (!dec)
         return RKVC_ERR_NOMEM;
 
@@ -346,7 +346,7 @@ rkvc_err rkvc_decoder_close(rkvc_decoder *dec)
         av_buffer_unref(&dec->hw_device_ctx);
 
     pthread_mutex_destroy(&dec->lock);
-    free(dec);
+    rkvc_free(dec);
     return RKVC_OK;
 }
 

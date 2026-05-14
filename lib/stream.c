@@ -74,7 +74,7 @@ rkvc_err rkvc_stream_open(rkvc_stream **out,
     if (err != RKVC_OK)
         return err;
 
-    rkvc_stream *s = calloc(1, sizeof(*s));
+    rkvc_stream *s = rkvc_calloc(1, sizeof(*s));
     if (!s)
         return RKVC_ERR_NOMEM;
 
@@ -99,7 +99,7 @@ rkvc_err rkvc_stream_open(rkvc_stream **out,
             pthread_mutex_destroy(&s->buf_lock);
             pthread_cond_destroy(&s->buf_not_full);
             pthread_cond_destroy(&s->buf_not_empty);
-            free(s);
+            rkvc_free(s);
             return err;
         }
     } else {
@@ -112,7 +112,7 @@ rkvc_err rkvc_stream_open(rkvc_stream **out,
             pthread_mutex_destroy(&s->buf_lock);
             pthread_cond_destroy(&s->buf_not_full);
             pthread_cond_destroy(&s->buf_not_empty);
-            free(s);
+            rkvc_free(s);
             return err;
         }
     }
@@ -247,7 +247,7 @@ rkvc_err rkvc_stream_close(rkvc_stream *s)
     pthread_cond_destroy(&s->buf_not_full);
     pthread_cond_destroy(&s->buf_not_empty);
 
-    free(s);
+    rkvc_free(s);
     return RKVC_OK;
 }
 

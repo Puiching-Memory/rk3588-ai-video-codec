@@ -18,6 +18,7 @@ option(RKVC_BUILD_TESTS    "Build unit tests (CMocka)" OFF)
 option(RKVC_ENABLE_ASAN    "Enable AddressSanitizer"   OFF)
 option(RKVC_ENABLE_UBSAN   "Enable UndefinedBehaviorSanitizer" OFF)
 option(RKVC_ENABLE_COVERAGE "Enable gcov/llvm-cov instrumentation" OFF)
+option(RKVC_ENABLE_FAULT_INJECTION "Enable deterministic test fault injection hooks" OFF)
 option(RKVC_ENABLE_TIDY    "Enable clang-tidy checks"  OFF)
 option(RKVC_BUILD_DOCS     "Build Doxygen API docs"    OFF)
 option(RKVC_INSTALL        "Generate install targets"   ON)
@@ -89,6 +90,12 @@ if(RKVC_ENABLE_COVERAGE)
     )
     target_link_options(rkvc_instrumentation INTERFACE
         --coverage
+    )
+endif()
+
+if(RKVC_ENABLE_FAULT_INJECTION)
+    target_compile_definitions(rkvc_instrumentation INTERFACE
+        RKVC_ENABLE_FAULT_INJECTION=1
     )
 endif()
 
@@ -279,7 +286,13 @@ if(RKVC_BUILD_TESTS)
         tests/test_types.c
         tests/test_frame.c
         tests/test_contracts.c
+        tests/test_internal.c
+        tests/test_hardware.c
     )
+
+    if(RKVC_ENABLE_FAULT_INJECTION)
+        list(APPEND RKVC_TEST_SOURCES tests/test_fault_injection.c)
+    endif()
 
     set(RKVC_TEST_TARGETS "")
 
@@ -290,6 +303,7 @@ if(RKVC_BUILD_TESTS)
         target_include_directories(${TEST_NAME}
             PRIVATE
                 ${CMAKE_CURRENT_SOURCE_DIR}/include
+                ${CMAKE_CURRENT_SOURCE_DIR}/lib
                 ${CMOCKA_INCLUDE_DIRS}
                 ${AVCODEC_INCLUDE_DIRS}
         )
@@ -300,6 +314,18 @@ if(RKVC_BUILD_TESTS)
         )
         add_test(NAME ${TEST_NAME} COMMAND ${TEST_NAME})
         set_tests_properties(${TEST_NAME} PROPERTIES LABELS unit)
+        if(TEST_NAME STREQUAL "test_hardware")
+            set_tests_properties(${TEST_NAME} PROPERTIES
+                LABELS integration
+                SKIP_RETURN_CODE 77
+            )
+        endif()
+        if(RKVC_ENABLE_ASAN OR RKVC_ENABLE_UBSAN)
+            set_tests_properties(${TEST_NAME} PROPERTIES
+                ENVIRONMENT
+                    "ASAN_OPTIONS=detect_leaks=0:halt_on_error=1:abort_on_error=1;UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1"
+            )
+        endif()
         list(APPEND RKVC_TEST_TARGETS ${TEST_NAME})
     endforeach()
 

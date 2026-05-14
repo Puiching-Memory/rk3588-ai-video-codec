@@ -3,6 +3,9 @@
 set -euo pipefail
 
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+COVERAGE_MIN_LINE=${RKVC_COVERAGE_MIN_LINE:-0}
+COVERAGE_MIN_BRANCH=${RKVC_COVERAGE_MIN_BRANCH:-0}
+VALGRIND_HARDWARE=${RKVC_VALGRIND_HARDWARE:-0}
 
 run_matrix() {
     local preset="$1"
@@ -17,7 +20,7 @@ run_matrix() {
     cmake --build --preset "$preset" -j"$(nproc)"
 
     echo "==> test: $preset"
-    ctest --preset "$preset"
+    ctest --preset "$preset" --output-on-failure
 }
 
 cd "$ROOT_DIR"
@@ -28,16 +31,52 @@ run_matrix coverage build-coverage
 
 if command -v valgrind >/dev/null 2>&1; then
     echo "==> valgrind: build-tests"
-    valgrind --quiet --leak-check=full --show-leak-kinds=all --error-exitcode=1 ./build-tests/test_types
-    valgrind --quiet --leak-check=full --show-leak-kinds=all --error-exitcode=1 ./build-tests/test_frame
-    valgrind --quiet --leak-check=full --show-leak-kinds=all --error-exitcode=1 ./build-tests/test_contracts
+    mapfile -t TEST_BINS < <(find "$ROOT_DIR/build-tests" -maxdepth 1 -type f -perm -111 -name 'test_*' | sort)
+    for test_bin in "${TEST_BINS[@]}"; do
+        test_name="$(basename "$test_bin")"
+        if [ "$test_name" = "test_hardware" ] && [ "$VALGRIND_HARDWARE" != "1" ]; then
+            echo "==> skipping valgrind: test_hardware (set RKVC_VALGRIND_HARDWARE=1 to include third-party RKMPP stack)"
+            continue
+        fi
+        echo "==> valgrind: $test_name"
+        valgrind --quiet \
+            --leak-check=full \
+            --show-leak-kinds=all \
+            --track-origins=yes \
+            --error-exitcode=1 \
+            "$test_bin"
+    done
 else
     echo "==> skipping valgrind (not installed)"
 fi
 
 if command -v gcovr >/dev/null 2>&1; then
     echo "==> coverage summary"
-    gcovr --root "$ROOT_DIR" "$ROOT_DIR/build-coverage"
+    COVERAGE_DIR="$ROOT_DIR/build-coverage/coverage"
+    mkdir -p "$COVERAGE_DIR"
+
+    GCOVR_ARGS=(
+        --root "$ROOT_DIR"
+        "$ROOT_DIR/build-coverage"
+        --exclude "$ROOT_DIR/third_party/.*"
+        --exclude "$ROOT_DIR/tests/.*"
+        --print-summary
+        --xml-pretty
+        --xml "$COVERAGE_DIR/coverage.xml"
+        --html
+        --html-details
+        --output "$COVERAGE_DIR/index.html"
+    )
+
+    if [ "$COVERAGE_MIN_LINE" -gt 0 ]; then
+        GCOVR_ARGS+=(--fail-under-line "$COVERAGE_MIN_LINE")
+    fi
+    if [ "$COVERAGE_MIN_BRANCH" -gt 0 ]; then
+        GCOVR_ARGS+=(--fail-under-branch "$COVERAGE_MIN_BRANCH")
+    fi
+
+    gcovr "${GCOVR_ARGS[@]}"
+    echo "==> coverage report: $COVERAGE_DIR/index.html"
 else
     echo "==> skipping gcovr (not installed)"
 fi
