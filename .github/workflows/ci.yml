@@ -5,7 +5,7 @@ on:
   pull_request:
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -26,7 +26,7 @@ jobs:
       - name: Generate ffmpeg config headers
         run: |
           cd third_party/ffmpeg-rockchip
-          ./configure --disable-everything --disable-doc --disable-programs
+          ./configure --disable-everything --disable-doc --disable-programs --disable-x86asm
 
       - name: Create compile_commands.json
         run: |
@@ -52,12 +52,23 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq cmake ninja-build libcmocka-dev
+          sudo apt-get install -y -qq cmake ninja-build libcmocka-dev nasm libdrm-dev
 
-      - name: Generate ffmpeg config headers
+      - name: Build ffmpeg-rockchip
         run: |
           cd third_party/ffmpeg-rockchip
-          ./configure --disable-everything --disable-doc --disable-programs
+          ./configure --enable-pic --enable-version3 --disable-everything \
+            --disable-doc --disable-programs --disable-x86asm \
+            --disable-avdevice --disable-avfilter --disable-postproc \
+            --disable-swscale --disable-swresample --disable-network \
+            --enable-rkmpp --enable-libdrm \
+            --enable-encoder=hevc_rkmpp \
+            --enable-decoder=hevc_rkmpp --enable-decoder=hevc \
+            --enable-muxer=hevc --enable-muxer=matroska --enable-muxer=mp4 --enable-muxer=mpegts \
+            --enable-demuxer=hevc --enable-demuxer=matroska --enable-demuxer=mov --enable-demuxer=mpegts \
+            --enable-parser=hevc \
+            --enable-protocol=file --enable-protocol=pipe
+          make -j$(nproc)
 
       - name: Configure
         run: |
@@ -78,8 +89,8 @@ jobs:
           name: test-results
           path: build/results.xml
 
-  docs:
-    name: Docs
+  package:
+    name: Package
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -90,48 +101,24 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq doxygen
-
-      - name: Build Doxygen
-        run: |
-          cmake -B build -DRKVC_BUILD_DOCS=ON
-          cmake --build build --target docs
-
-      - name: Upload API docs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: doxygen-api-docs
-          path: build/docs/html/
-          if-no-files-found: ignore
-
-      - name: Build Zensical
-        run: |
-          pip install zensical
-          zensical build
-
-      - name: Upload site
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: zensical-site
-          path: site/
-          if-no-files-found: ignore
-
-  package:
-    name: Package
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    needs: [test]
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install dependencies
-        run: |
-          sudo apt-get update -qq
           sudo apt-get install -y -qq \
-            cmake ninja-build patchelf \
-            libavcodec-dev libavformat-dev libavutil-dev
+            cmake ninja-build patchelf nasm libdrm-dev
+
+      - name: Build ffmpeg-rockchip
+        run: |
+          cd third_party/ffmpeg-rockchip
+          ./configure --enable-pic --enable-version3 --disable-everything \
+            --disable-doc --disable-programs --disable-x86asm \
+            --disable-avdevice --disable-avfilter --disable-postproc \
+            --disable-swscale --disable-swresample --disable-network \
+            --enable-rkmpp --enable-libdrm \
+            --enable-encoder=hevc_rkmpp \
+            --enable-decoder=hevc_rkmpp --enable-decoder=hevc \
+            --enable-muxer=hevc --enable-muxer=matroska --enable-muxer=mp4 --enable-muxer=mpegts \
+            --enable-demuxer=hevc --enable-demuxer=matroska --enable-demuxer=mov --enable-demuxer=mpegts \
+            --enable-parser=hevc \
+            --enable-protocol=file --enable-protocol=pipe
+          make -j$(nproc)
 
       - name: Build and package
         run: |
