@@ -56,6 +56,27 @@ static const char *guess_muxer(const char *path)
 
 /* ── 内部: 配置编码器上下文 ────────────────────────────────────────── */
 
+static rkvc_err validate_encoder_config(const rkvc_encoder_config *cfg)
+{
+    if (!cfg)
+        return RKVC_ERR_INVALID;
+
+    if (cfg->width <= 0 || cfg->height <= 0)
+        return RKVC_ERR_INVALID;
+    if (cfg->fps_num <= 0 || cfg->fps_den <= 0)
+        return RKVC_ERR_INVALID;
+    if (cfg->bitrate <= 0 || cfg->gop_size <= 0)
+        return RKVC_ERR_INVALID;
+    if (!rkvc_is_valid_pix_fmt(cfg->input_format) ||
+        !rkvc_is_valid_preset(cfg->preset) ||
+        !rkvc_is_valid_rc_mode(cfg->rc_mode))
+        return RKVC_ERR_INVALID;
+    if (cfg->qp < 0 || cfg->num_b_frames < 0 || cfg->threads < 0)
+        return RKVC_ERR_INVALID;
+
+    return RKVC_OK;
+}
+
 static rkvc_err setup_codec(AVCodecContext *ctx,
                             const rkvc_encoder_config *cfg)
 {
@@ -157,10 +178,14 @@ static rkvc_err encoder_open_internal(rkvc_encoder **out,
                                       const rkvc_encoder_config *cfg,
                                       const char *output_path)
 {
-    if (!out || !cfg)
+    if (!out)
         return RKVC_ERR_INVALID;
-    if (cfg->width <= 0 || cfg->height <= 0)
-        return RKVC_ERR_INVALID;
+
+    *out = NULL;
+
+    rkvc_err err = validate_encoder_config(cfg);
+    if (err != RKVC_OK)
+        return err;
 
     rkvc_init();
 
@@ -172,7 +197,7 @@ static rkvc_err encoder_open_internal(rkvc_encoder **out,
     pthread_mutex_init(&enc->lock, NULL);
 
     /* 获取硬件设备上下文 */
-    rkvc_err err = rkvc_get_hw_device_ctx(&enc->hw_device_ctx);
+    err = rkvc_get_hw_device_ctx(&enc->hw_device_ctx);
     if (err != RKVC_OK) {
         RKVC_LOG("hw device ctx failed, falling back to software");
         enc->hw_device_ctx = NULL;
@@ -288,7 +313,7 @@ rkvc_err rkvc_encoder_open_file(rkvc_encoder **out,
                                 const rkvc_encoder_config *cfg,
                                 const char *output_path)
 {
-    if (!output_path)
+    if (!output_path || output_path[0] == '\0')
         return RKVC_ERR_INVALID;
     return encoder_open_internal(out, cfg, output_path);
 }

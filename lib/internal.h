@@ -47,6 +47,12 @@ rkvc_err rkvc_from_averror(int av_err);
 /** 获取 FFmpeg RKMPP 硬件设备上下文 (单例, 线程安全) */
 rkvc_err rkvc_get_hw_device_ctx(AVBufferRef **out);
 
+/** 校验公共枚举值是否合法。 */
+int rkvc_is_valid_pix_fmt(rkvc_pix_fmt fmt);
+int rkvc_is_valid_preset(rkvc_preset preset);
+int rkvc_is_valid_rc_mode(rkvc_rc_mode mode);
+int rkvc_is_valid_stream_dir(rkvc_stream_dir dir);
+
 /** rkvc_pix_fmt → AVPixelFormat */
 enum AVPixelFormat rkvc_to_av_pix_fmt(rkvc_pix_fmt fmt);
 

@@ -1,5 +1,5 @@
 {
-    "version": 6,
+    "version": 3,
     "cmakeMinimumRequired": { "major": 3, "minor": 16, "patch": 0 },
     "configurePresets": [
         {
@@ -9,8 +9,7 @@
             "binaryDir": "${sourceDir}/build",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Release",
-                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
-                "FFMPEG_ROOT": "/usr/local/ffmpeg-rockchip"
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
             }
         },
         {
@@ -20,8 +19,7 @@
             "binaryDir": "${sourceDir}/build-debug",
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Debug",
-                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
-                "FFMPEG_ROOT": "/usr/local/ffmpeg-rockchip"
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON"
             }
         },
         {
@@ -30,6 +28,40 @@
             "inherits": "debug",
             "cacheVariables": {
                 "CMAKE_C_CLANG_TIDY": "clang-tidy;--header-filter=${sourceDir}/include/.*"
+            }
+        },
+        {
+            "name": "tests",
+            "displayName": "Unit Tests",
+            "generator": "Ninja",
+            "binaryDir": "${sourceDir}/build-tests",
+            "cacheVariables": {
+                "CMAKE_BUILD_TYPE": "Debug",
+                "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+                "RKVC_BUILD_SHARED": "OFF",
+                "RKVC_BUILD_EXAMPLES": "OFF",
+                "RKVC_BUILD_TOOLS": "OFF",
+                "RKVC_BUILD_TESTS": "ON",
+                "RKVC_INSTALL": "OFF"
+            }
+        },
+        {
+            "name": "asan",
+            "displayName": "ASan + UBSan Tests",
+            "inherits": "tests",
+            "binaryDir": "${sourceDir}/build-asan",
+            "cacheVariables": {
+                "RKVC_ENABLE_ASAN": "ON",
+                "RKVC_ENABLE_UBSAN": "ON"
+            }
+        },
+        {
+            "name": "coverage",
+            "displayName": "Coverage Tests",
+            "inherits": "tests",
+            "binaryDir": "${sourceDir}/build-coverage",
+            "cacheVariables": {
+                "RKVC_ENABLE_COVERAGE": "ON"
             }
         }
     ],
@@ -41,18 +73,51 @@
         },
         {
             "name": "tests",
-            "configurePreset": "default",
-            "targets": ["test_types", "test_frame"]
+            "configurePreset": "tests",
+            "targets": ["check"]
+        },
+        {
+            "name": "asan",
+            "configurePreset": "asan",
+            "targets": ["check"]
+        },
+        {
+            "name": "coverage",
+            "configurePreset": "coverage",
+            "targets": ["check"]
         },
         {
             "name": "docs",
             "configurePreset": "default",
-            "targets": ["rkvc_docs"]
+            "targets": ["docs"]
         },
         {
             "name": "package",
             "configurePreset": "default",
             "targets": ["package"]
+        }
+    ],
+    "testPresets": [
+        {
+            "name": "tests",
+            "configurePreset": "tests",
+            "output": {
+                "outputOnFailure": true
+            }
+        },
+        {
+            "name": "asan",
+            "configurePreset": "asan",
+            "output": {
+                "outputOnFailure": true
+            }
+        },
+        {
+            "name": "coverage",
+            "configurePreset": "coverage",
+            "output": {
+                "outputOnFailure": true
+            }
         }
     ]
 }

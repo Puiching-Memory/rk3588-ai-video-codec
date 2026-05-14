@@ -32,12 +32,39 @@ make -j$(nproc)
 cmake --install . --prefix /usr/local
 ```
 
+## 严格测试
+
+本项目把测试分成可重复执行的三个层次，思路参考 SQLite：优先做确定性契约测试，再做异常与未定义行为检查，最后做覆盖率度量。
+
+```bash
+# 基线单元测试
+cmake --preset tests
+cmake --build --preset tests
+ctest --preset tests
+
+# ASan + UBSan
+cmake --preset asan
+cmake --build --preset asan
+ctest --preset asan
+
+# 覆盖率构建
+cmake --preset coverage
+cmake --build --preset coverage
+ctest --preset coverage
+
+# 一键严格模式
+./scripts/test-strict.sh
+```
+
+更详细的测试策略见 [docs/testing.md](docs/testing.md)。
+
 ### 依赖
 
 - Rockchip BSP 内核 (5.10 或 6.1)
 - [ffmpeg-rockchip](https://github.com/nyanmisaka/ffmpeg-rockchip) (`/usr/local/ffmpeg-rockchip`)
 - libdrm-dev
 - CMake >= 3.16
+- CMocka (单元测试)
 
 ### 设备权限
 
@@ -110,10 +137,10 @@ cd build
 
 当前项目只启用 HEVC 路径，FFmpeg 构建也按此裁剪：
 
-| 路径            | 编码           | 解码           | 备注                          |
-| --------------- | -------------- | -------------- | ----------------------------- |
-| HEVC 硬件路径   | `hevc_rkmpp` ✅ | `hevc_rkmpp` ✅ | 编解码均走 RKMPP              |
-| HEVC 软件回退   | 未启用         | FFmpeg HEVC ✅  | 精简配置仅保留软件解码回退    |
+| 路径          | 编码           | 解码           | 备注                       |
+| ------------- | -------------- | -------------- | -------------------------- |
+| HEVC 硬件路径 | `hevc_rkmpp` ✅ | `hevc_rkmpp` ✅ | 编解码均走 RKMPP           |
+| HEVC 软件回退 | 未启用         | FFmpeg HEVC ✅  | 精简配置仅保留软件解码回退 |
 
 ## 致谢
 

@@ -15,6 +15,9 @@ option(RKVC_BUILD_STATIC   "Build static library"      ON)
 option(RKVC_BUILD_EXAMPLES "Build example programs"    ON)
 option(RKVC_BUILD_TOOLS    "Build CLI tools"           ON)
 option(RKVC_BUILD_TESTS    "Build unit tests (CMocka)" OFF)
+option(RKVC_ENABLE_ASAN    "Enable AddressSanitizer"   OFF)
+option(RKVC_ENABLE_UBSAN   "Enable UndefinedBehaviorSanitizer" OFF)
+option(RKVC_ENABLE_COVERAGE "Enable gcov/llvm-cov instrumentation" OFF)
 option(RKVC_ENABLE_TIDY    "Enable clang-tidy checks"  OFF)
 option(RKVC_BUILD_DOCS     "Build Doxygen API docs"    OFF)
 option(RKVC_INSTALL        "Generate install targets"   ON)
@@ -48,6 +51,47 @@ set(RKVC_SOURCES
     lib/utils.c
 )
 
+add_library(rkvc_instrumentation INTERFACE)
+
+if(RKVC_ENABLE_ASAN OR RKVC_ENABLE_UBSAN OR RKVC_ENABLE_COVERAGE)
+    if(NOT CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
+        message(FATAL_ERROR "Sanitizers and coverage require GCC or Clang")
+    endif()
+endif()
+
+if(RKVC_ENABLE_ASAN)
+    target_compile_options(rkvc_instrumentation INTERFACE
+        -fsanitize=address
+        -fno-omit-frame-pointer
+    )
+    target_link_options(rkvc_instrumentation INTERFACE
+        -fsanitize=address
+        -fno-omit-frame-pointer
+    )
+endif()
+
+if(RKVC_ENABLE_UBSAN)
+    target_compile_options(rkvc_instrumentation INTERFACE
+        -fsanitize=undefined
+        -fno-omit-frame-pointer
+    )
+    target_link_options(rkvc_instrumentation INTERFACE
+        -fsanitize=undefined
+        -fno-omit-frame-pointer
+    )
+endif()
+
+if(RKVC_ENABLE_COVERAGE)
+    target_compile_options(rkvc_instrumentation INTERFACE
+        -O0
+        -g
+        --coverage
+    )
+    target_link_options(rkvc_instrumentation INTERFACE
+        --coverage
+    )
+endif()
+
 # ── 库目标 ─────────────────────────────────────────────────────────────
 if(RKVC_BUILD_SHARED)
     add_library(rkvc_shared SHARED ${RKVC_SOURCES})
@@ -61,7 +105,7 @@ if(RKVC_BUILD_SHARED)
             ${CMAKE_CURRENT_SOURCE_DIR}/lib
     )
     target_link_directories(rkvc_shared PRIVATE ${AVCODEC_LIB_DIRS} ${MPP_LIB_DIR})
-    target_link_libraries(rkvc_shared PRIVATE ${FFMPEG_LIBS} ${EXTRA_LIBS})
+    target_link_libraries(rkvc_shared PRIVATE rkvc_instrumentation ${FFMPEG_LIBS} ${EXTRA_LIBS})
     set_target_properties(rkvc_shared PROPERTIES
         OUTPUT_NAME rkvc
         VERSION     ${PROJECT_VERSION}
@@ -84,7 +128,7 @@ if(RKVC_BUILD_STATIC)
             ${CMAKE_CURRENT_SOURCE_DIR}/lib
     )
     target_link_directories(rkvc_static PUBLIC ${AVCODEC_LIB_DIRS} ${MPP_LIB_DIR})
-    target_link_libraries(rkvc_static PUBLIC ${FFMPEG_LIBS} ${EXTRA_LIBS})
+    target_link_libraries(rkvc_static PUBLIC rkvc_instrumentation ${FFMPEG_LIBS} ${EXTRA_LIBS})
     set_target_properties(rkvc_static PROPERTIES OUTPUT_NAME rkvc)
     add_library(rkvc::static ALIAS rkvc_static)
 endif()
@@ -229,16 +273,20 @@ endif()
 if(RKVC_BUILD_TESTS)
     find_package(PkgConfig REQUIRED)
     pkg_check_modules(CMOCKA REQUIRED cmocka)
+    enable_testing()
 
     set(RKVC_TEST_SOURCES
         tests/test_types.c
         tests/test_frame.c
+        tests/test_contracts.c
     )
+
+    set(RKVC_TEST_TARGETS "")
 
     foreach(TEST_SRC ${RKVC_TEST_SOURCES})
         get_filename_component(TEST_NAME ${TEST_SRC} NAME_WE)
         add_executable(${TEST_NAME} ${TEST_SRC})
-        target_link_libraries(${TEST_NAME} PRIVATE rkvc_static ${CMOCKA_LIBRARIES})
+        target_link_libraries(${TEST_NAME} PRIVATE rkvc_static rkvc_instrumentation ${CMOCKA_LIBRARIES})
         target_include_directories(${TEST_NAME}
             PRIVATE
                 ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -251,9 +299,17 @@ if(RKVC_BUILD_TESTS)
                 ${CMOCKA_LIBRARY_DIRS}
         )
         add_test(NAME ${TEST_NAME} COMMAND ${TEST_NAME})
+        set_tests_properties(${TEST_NAME} PROPERTIES LABELS unit)
+        list(APPEND RKVC_TEST_TARGETS ${TEST_NAME})
     endforeach()
 
-    enable_testing()
+    add_custom_target(check
+        COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
+        DEPENDS ${RKVC_TEST_TARGETS}
+        WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+        COMMENT "Building and running rkvc unit tests"
+        VERBATIM
+    )
 endif()
 
 # ── Doxygen API 文档 ─────────────────────────────────────────────────

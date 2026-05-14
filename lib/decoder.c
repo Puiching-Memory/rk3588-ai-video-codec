@@ -24,12 +24,33 @@ rkvc_decoder_config rkvc_decoder_config_defaults(void)
 
 /* ── 内部: 通用打开逻辑 ───────────────────────────────────────────── */
 
+static rkvc_err validate_decoder_config(const rkvc_decoder_config *cfg)
+{
+    if (!cfg)
+        return RKVC_ERR_INVALID;
+
+    if (!rkvc_is_valid_pix_fmt(cfg->output_format))
+        return RKVC_ERR_INVALID;
+    if (cfg->threads < 0)
+        return RKVC_ERR_INVALID;
+    if (cfg->low_delay != 0 && cfg->low_delay != 1)
+        return RKVC_ERR_INVALID;
+
+    return RKVC_OK;
+}
+
 static rkvc_err decoder_open_internal(rkvc_decoder **out,
                                       const rkvc_decoder_config *cfg,
                                       const char *input_path)
 {
-    if (!out || !cfg)
+    if (!out)
         return RKVC_ERR_INVALID;
+
+    *out = NULL;
+
+    rkvc_err err = validate_decoder_config(cfg);
+    if (err != RKVC_OK)
+        return err;
 
     rkvc_init();
 
@@ -153,7 +174,7 @@ rkvc_err rkvc_decoder_open_file(rkvc_decoder **out,
                                 const rkvc_decoder_config *cfg,
                                 const char *input_path)
 {
-    if (!input_path)
+    if (!input_path || input_path[0] == '\0')
         return RKVC_ERR_INVALID;
     return decoder_open_internal(out, cfg, input_path);
 }

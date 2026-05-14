@@ -6,7 +6,7 @@
 - [ffmpeg-rockchip](https://github.com/nyanmisaka/ffmpeg-rockchip) 安装在 `/usr/local/ffmpeg-rockchip`
 - libdrm-dev
 - CMake >= 3.16
-- Criterion (测试框架，可选)
+- CMocka (测试框架，可选)
 
 ## 设备权限
 
@@ -32,9 +32,9 @@ make -j$(nproc)
 
 ```bash
 # 构建并运行单元测试
-cmake -B build -DRKVC_BUILD_TESTS=ON
-cmake --build build --target rkvc_tests
-cd build && ctest --output-on-failure
+cmake --preset tests
+cmake --build --preset tests
+ctest --preset tests
 
 # 运行基准测试
 ./build/rkvc_bench --quick

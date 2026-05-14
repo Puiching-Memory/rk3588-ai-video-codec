@@ -33,11 +33,46 @@ rkvc_stream_config rkvc_stream_config_defaults(void)
 
 /* ── 打开流 ────────────────────────────────────────────────────────── */
 
+static rkvc_err validate_stream_config(const rkvc_stream_config *cfg)
+{
+    if (!cfg)
+        return RKVC_ERR_INVALID;
+
+    if (!rkvc_is_valid_stream_dir(cfg->direction))
+        return RKVC_ERR_INVALID;
+    if (cfg->buffer_size <= 0 || cfg->buffer_size > RKVC_STREAM_BUF_MAX)
+        return RKVC_ERR_INVALID;
+    if (cfg->drop_frames != 0 && cfg->drop_frames != 1)
+        return RKVC_ERR_INVALID;
+
+    if (cfg->direction == RKVC_STREAM_ENCODE) {
+        if (cfg->width <= 0 || cfg->height <= 0)
+            return RKVC_ERR_INVALID;
+        if (cfg->fps_num <= 0 || cfg->fps_den <= 0)
+            return RKVC_ERR_INVALID;
+        if (cfg->bitrate <= 0)
+            return RKVC_ERR_INVALID;
+        if (!rkvc_is_valid_pix_fmt(cfg->input_format) ||
+            !rkvc_is_valid_preset(cfg->preset))
+            return RKVC_ERR_INVALID;
+    } else if (!rkvc_is_valid_pix_fmt(cfg->output_format)) {
+        return RKVC_ERR_INVALID;
+    }
+
+    return RKVC_OK;
+}
+
 rkvc_err rkvc_stream_open(rkvc_stream **out,
                           const rkvc_stream_config *cfg)
 {
-    if (!out || !cfg)
+    if (!out)
         return RKVC_ERR_INVALID;
+
+    *out = NULL;
+
+    rkvc_err err = validate_stream_config(cfg);
+    if (err != RKVC_OK)
+        return err;
 
     rkvc_stream *s = calloc(1, sizeof(*s));
     if (!s)
@@ -47,8 +82,6 @@ rkvc_err rkvc_stream_open(rkvc_stream **out,
     pthread_mutex_init(&s->buf_lock, NULL);
     pthread_cond_init(&s->buf_not_full, NULL);
     pthread_cond_init(&s->buf_not_empty, NULL);
-
-    rkvc_err err;
 
     if (cfg->direction == RKVC_STREAM_ENCODE) {
         /* 创建内部编码器 */
@@ -63,6 +96,9 @@ rkvc_err rkvc_stream_open(rkvc_stream **out,
 
         err = rkvc_encoder_open(&s->enc, &enc_cfg);
         if (err != RKVC_OK) {
+            pthread_mutex_destroy(&s->buf_lock);
+            pthread_cond_destroy(&s->buf_not_full);
+            pthread_cond_destroy(&s->buf_not_empty);
             free(s);
             return err;
         }
@@ -73,6 +109,9 @@ rkvc_err rkvc_stream_open(rkvc_stream **out,
 
         err = rkvc_decoder_open(&s->dec, &dec_cfg);
         if (err != RKVC_OK) {
+            pthread_mutex_destroy(&s->buf_lock);
+            pthread_cond_destroy(&s->buf_not_full);
+            pthread_cond_destroy(&s->buf_not_empty);
             free(s);
             return err;
         }

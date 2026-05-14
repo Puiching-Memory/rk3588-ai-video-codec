@@ -2,6 +2,9 @@
 build/
 build-deps/
 build-debug/
+build-tests/
+build-asan/
+build-coverage/
 *.o
 *.a
 *.so

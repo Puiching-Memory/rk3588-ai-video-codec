@@ -8,7 +8,12 @@
 rkvc_err rkvc_frame_alloc(rkvc_frame **out, int width, int height,
                           rkvc_pix_fmt format)
 {
-    if (!out || width <= 0 || height <= 0)
+    if (!out)
+        return RKVC_ERR_INVALID;
+
+    *out = NULL;
+
+    if (width <= 0 || height <= 0 || !rkvc_is_valid_pix_fmt(format))
         return RKVC_ERR_INVALID;
 
     rkvc_frame *f = calloc(1, sizeof(*f));

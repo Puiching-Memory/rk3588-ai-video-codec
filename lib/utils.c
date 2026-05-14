@@ -66,6 +66,54 @@ rkvc_err rkvc_get_hw_device_ctx(AVBufferRef **out)
     return RKVC_OK;
 }
 
+int rkvc_is_valid_pix_fmt(rkvc_pix_fmt fmt)
+{
+    switch (fmt) {
+    case RKVC_PIX_FMT_NV12:
+    case RKVC_PIX_FMT_YUV420P:
+    case RKVC_PIX_FMT_NV16:
+    case RKVC_PIX_FMT_P010:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+int rkvc_is_valid_preset(rkvc_preset preset)
+{
+    switch (preset) {
+    case RKVC_PRESET_FAST:
+    case RKVC_PRESET_MEDIUM:
+    case RKVC_PRESET_SLOW:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+int rkvc_is_valid_rc_mode(rkvc_rc_mode mode)
+{
+    switch (mode) {
+    case RKRC_CBR:
+    case RKRC_VBR:
+    case RKRC_CQP:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
+int rkvc_is_valid_stream_dir(rkvc_stream_dir dir)
+{
+    switch (dir) {
+    case RKVC_STREAM_ENCODE:
+    case RKVC_STREAM_DECODE:
+        return 1;
+    default:
+        return 0;
+    }
+}
+
 /* ── 像素格式转换 ──────────────────────────────────────────────────── */
 
 enum AVPixelFormat rkvc_to_av_pix_fmt(rkvc_pix_fmt fmt)
@@ -75,7 +123,7 @@ enum AVPixelFormat rkvc_to_av_pix_fmt(rkvc_pix_fmt fmt)
     case RKVC_PIX_FMT_YUV420P: return AV_PIX_FMT_YUV420P;
     case RKVC_PIX_FMT_NV16:    return AV_PIX_FMT_NV16;
     case RKVC_PIX_FMT_P010:    return AV_PIX_FMT_P010;
-    default:                    return AV_PIX_FMT_NV12;
+    default:                    return AV_PIX_FMT_NONE;
     }
 }
 
@@ -110,7 +158,7 @@ rkvc_frame *rkvc_frame_wrap_avframe(AVFrame *av_frame)
     f->info.height    = av_frame->height;
     f->info.format    = rkvc_from_av_pix_fmt(av_frame->format);
     f->info.pts       = av_frame->pts;
-    f->info.key_frame = av_frame->key_frame;
+    f->info.key_frame = (av_frame->flags & AV_FRAME_FLAG_KEY) != 0;
 
     return f;
 }

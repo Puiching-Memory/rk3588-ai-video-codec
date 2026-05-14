@@ -24,3 +24,4 @@
 - [API 参考](api.md) — 完整 API 文档
 - [架构](architecture.md) — 内部设计和模块关系
 - [基准测试](benchmark.md) — 性能测试方法和结果
+- [测试](testing.md) — 严格测试策略与执行矩阵
