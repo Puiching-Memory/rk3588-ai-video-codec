@@ -21,7 +21,14 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq clang-tidy librga-dev
+          sudo apt-get install -y -qq clang-tidy
+
+      - name: Install librga
+        run: |
+          git clone --depth 1 https://github.com/airockchip/librga.git /tmp/librga
+          sudo cp -r /tmp/librga/include/rga /usr/local/include/
+          sudo cp /tmp/librga/libs/Linux/gcc-aarch64/librga.so /usr/local/lib/
+          sudo ldconfig
 
       - name: Generate ffmpeg config headers
         run: |
@@ -52,7 +59,14 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq cmake ninja-build libcmocka-dev libdrm-dev librga-dev
+          sudo apt-get install -y -qq cmake ninja-build libcmocka-dev libdrm-dev
+
+      - name: Install librga
+        run: |
+          git clone --depth 1 https://github.com/airockchip/librga.git /tmp/librga
+          sudo cp -r /tmp/librga/include/rga /usr/local/include/
+          sudo cp /tmp/librga/libs/Linux/gcc-aarch64/librga.so /usr/local/lib/
+          sudo ldconfig
 
       - name: Build MPP
         run: |
@@ -114,7 +128,14 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq \
-            cmake ninja-build patchelf libdrm-dev librga-dev
+            cmake ninja-build patchelf libdrm-dev
+
+      - name: Install librga
+        run: |
+          git clone --depth 1 https://github.com/airockchip/librga.git /tmp/librga
+          sudo cp -r /tmp/librga/include/rga /usr/local/include/
+          sudo cp /tmp/librga/libs/Linux/gcc-aarch64/librga.so /usr/local/lib/
+          sudo ldconfig
 
       - name: Build MPP
         run: |
