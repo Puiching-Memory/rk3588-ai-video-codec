@@ -167,12 +167,18 @@ package() {
     for real in lib*.so.*; do
         [[ -f "$real" ]] || continue
         [[ -L "$real" ]] && continue
-        # libfoo.so.1.2.3 → libfoo.so.1
-        base="$(echo "$real" | sed 's/\.\([0-9]*\.[0-9]*\.[0-9]*\)$//')"
-        # libfoo.so.1.2.3 → libfoo.so
+        # libfoo.so → dev 符号链接
         short="$(echo "$real" | sed 's/\.so\..*/.so/')"
-        ln -sf "$real" "$base" 2>/dev/null || true
         ln -sf "$real" "$short" 2>/dev/null || true
+        # 创建所有中间层级符号链接: libfoo.so.1.2.3 → libfoo.so.1.2 → libfoo.so.1
+        ver_part="${real#*.so.}"
+        prefix="${real%%.so.*}.so"
+        IFS='.' read -ra parts <<< "$ver_part"
+        for (( i=1; i<${#parts[@]}; i++ )); do
+            intermediate="$prefix.${parts[*]:0:$i}"
+            intermediate="${intermediate// /.}"
+            ln -sf "$real" "$intermediate" 2>/dev/null || true
+        done
     done
     cd "$PROJECT_DIR"
 

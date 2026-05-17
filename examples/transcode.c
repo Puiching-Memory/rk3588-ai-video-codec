@@ -79,9 +79,14 @@ int main(int argc, char **argv)
     if (out_width <= 0)  out_width  = src_w;
     if (out_height <= 0) out_height = src_h;
 
-    printf("转码: %s (%dx%d) → %s (%dx%d @ %d kbps)\n",
+    int need_scale = (out_width != src_w) || (out_height != src_h);
+    rkvc_scale_config scfg = { .dst_width = out_width, .dst_height = out_height,
+                               .dst_format = -1 };
+
+    printf("转码: %s (%dx%d) → %s (%dx%d @ %d kbps)%s\n",
            input, src_w, src_h, output, out_width, out_height,
-           out_bitrate / 1000);
+           out_bitrate / 1000,
+           need_scale ? " [RGA 缩放]" : "");
 
     /* 打开编码器 */
     rkvc_encoder *enc = NULL;
@@ -113,9 +118,23 @@ int main(int argc, char **argv)
 
         rkvc_frame *f = NULL;
         while (rkvc_decoder_receive_frame(dec, &f) == RKVC_OK) {
-            /* 简单转码: 直接送入编码器 (同分辨率时零拷贝) */
-            err = rkvc_encoder_send_frame(enc, f);
-            rkvc_frame_unref(f);
+            /* 分辨率不匹配时先用 RGA 缩放 */
+            rkvc_frame *enc_frame = f;
+            rkvc_frame *scaled = NULL;
+            if (need_scale) {
+                err = rkvc_frame_scale(f, &scaled, &scfg);
+                if (err != RKVC_OK) {
+                    fprintf(stderr, "缩放失败: %s\n", rkvc_err_str(err));
+                    rkvc_frame_unref(f);
+                    break;
+                }
+                enc_frame = scaled;
+            }
+
+            err = rkvc_encoder_send_frame(enc, enc_frame);
+            rkvc_frame_unref(enc_frame);
+            if (need_scale)
+                rkvc_frame_unref(f);
 
             if (err != RKVC_OK && err != RKVC_ERR_AGAIN) {
                 fprintf(stderr, "编码失败: %s\n", rkvc_err_str(err));

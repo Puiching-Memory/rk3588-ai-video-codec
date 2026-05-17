@@ -31,11 +31,19 @@ echo ""
 
 # 1. 文件完整性
 echo "--- 文件完整性 ---"
-for f in bin/rkvc_encode bin/rkvc_decode bin/rkvc_info lib/librkvc.so lib/libavcodec.so.60 lib/libavformat.so.60 lib/libavutil.so.58 include/rkvc/rkvc.h; do
+for f in bin/rkvc_encode bin/rkvc_decode bin/rkvc_info lib/librkvc.so include/rkvc/rkvc.h; do
     if [ -e "$PKG_DIR/$f" ]; then
         pass "存在: $f"
     else
         fail "缺失: $f"
+    fi
+done
+# ffmpeg 库使用通配符匹配 (版本号随 ffmpeg 版本变化)
+for name in libavcodec libavformat libavutil; do
+    if ls "$PKG_DIR/lib/${name}.so."* >/dev/null 2>&1; then
+        pass "存在: lib/${name}.so.*"
+    else
+        fail "缺失: lib/${name}.so.*"
     fi
 done
 echo ""

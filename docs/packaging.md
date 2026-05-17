@@ -12,13 +12,13 @@ git submodule update --init --depth 1
 ./scripts/package-portable.sh
 
 # 测试
-./scripts/test-portable.sh build/portable/rkvc-0.1.0-linux-aarch64-portable
+./scripts/test-portable.sh build/portable/rkvc-0.1.2-linux-aarch64-portable
 ```
 
-产物：`rkvc-0.1.0-linux-aarch64-portable.tar.gz` (~7.4MB)
+产物：`rkvc-0.1.2-linux-aarch64-portable.tar.gz` (~7.4MB)
 
 ```
-rkvc-0.1.0-linux-aarch64-portable/
+rkvc-0.1.2-linux-aarch64-portable/
 ├── bin/                     # 可执行工具 (RPATH 自包含)
 │   ├── rkvc_encode
 │   ├── rkvc_decode
@@ -38,8 +38,8 @@ rkvc-0.1.0-linux-aarch64-portable/
 
 ```bash
 # 解压
-tar xzf rkvc-0.1.0-linux-aarch64-portable.tar.gz
-cd rkvc-0.1.0-linux-aarch64-portable
+tar xzf rkvc-0.1.2-linux-aarch64-portable.tar.gz
+cd rkvc-0.1.2-linux-aarch64-portable
 
 # 运行工具
 ./bin/rkvc_info
@@ -69,7 +69,7 @@ cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 ninja -C build package
 
 # 安装
-sudo dpkg -i build/packages/rkvc_0.1.0_arm64.deb
+sudo dpkg -i build/packages/rkvc_0.1.2_arm64.deb
 ```
 
 !!! note
@@ -81,7 +81,7 @@ sudo dpkg -i build/packages/rkvc_0.1.0_arm64.deb
 
 ```bash
 ninja -C build package
-# 产物: build/packages/rkvc-0.1.0-Linux.tar.gz
+# 产物: build/packages/rkvc-0.1.2-Linux.tar.gz
 ```
 
 ## 打包脚本

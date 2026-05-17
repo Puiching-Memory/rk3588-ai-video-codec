@@ -2,6 +2,18 @@
 
 本文档记录 rkvc 各版本的主要变更。
 
+## [0.1.2] - 2026-05-17
+
+### 修复
+
+- **转码示例降分辨率失败**: `examples/transcode.c` 直接将解码帧送入不同分辨率的编码器导致 RKMPP 报 `invalid parameter`，修复为当分辨率不匹配时先用 `rkvc_frame_scale()` RGA 硬件缩放再送入编码器。
+- **打包脚本符号链接**: `scripts/package-portable.sh` 修复动态库中间层级符号链接缺失（如 `libavcodec.so.60`），改为递归创建所有中间版本链接。
+- **测试脚本版本兼容**: `scripts/test-portable.sh` ffmpeg 库检查改为通配符匹配，不再硬编码具体版本号。
+
+### 变更
+
+- 版本号提升至 0.1.2。
+
 ## [0.1.1] - 2026-05-17
 
 ### 新增
