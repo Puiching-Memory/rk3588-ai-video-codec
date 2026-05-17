@@ -7,8 +7,8 @@
 #include <pthread.h>
 #include <sys/stat.h>
 
-#define RKVC_VERSION_STR "0.1.0"
-#define RKVC_VERSION_NUM 0x000100
+#define RKVC_VERSION_STR "0.1.1"
+#define RKVC_VERSION_NUM 0x000101
 
 static pthread_once_t s_init_once = PTHREAD_ONCE_INIT;
 static int s_initialized = 0;

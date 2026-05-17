@@ -9,7 +9,8 @@
 #   2. 用编译的 ffmpeg 构建 rkvc
 #   3. bundle 动态库 + RPATH 打包
 #
-# 前置依赖: gcc, make, pkg-config, ninja, patchelf, libdrm-dev
+# 前置依赖: gcc, make, pkg-config, patchelf, libdrm-dev
+# 可选依赖: ninja (若已有 ninja 构建目录则自动使用)
 
 set -euo pipefail
 
@@ -17,7 +18,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 FFMPEG_SRC="$PROJECT_DIR/third_party/ffmpeg-rockchip"
 FFMPEG_PREFIX="$PROJECT_DIR/build-deps/ffmpeg-install"
-RKVC_BUILD="$PROJECT_DIR/build"
+RKVC_BUILD="$PROJECT_DIR/build-portable"
 OUT_DIR="$PROJECT_DIR/build/portable"
 
 VERSION="$(grep -A1 'project(rkvc' "$PROJECT_DIR/CMakeLists.txt" | grep 'VERSION' | grep -oP '[0-9]+\.[0-9]+\.[0-9]+')"
@@ -27,9 +28,30 @@ PKG_NAME="rkvc-${VERSION}-linux-${ARCH}-portable"
 CLEAN=0
 [[ "${1:-}" == "--clean" ]] && CLEAN=1
 
+# 自动检测 CMake 生成器: 若系统有 ninja 且 build 目录用 Ninja 则使用 Ninja，否则 Unix Makefiles
+detect_generator() {
+    local cache="$RKVC_BUILD/CMakeCache.txt"
+    if [[ -f "$cache" ]] && grep -q "CMAKE_MAKE_PROGRAM.*ninja" "$cache"; then
+        echo "Ninja"
+    elif command -v ninja &>/dev/null; then
+        echo "Ninja"
+    else
+        echo "Unix Makefiles"
+    fi
+}
+
+detect_build_cmd() {
+    local cache="$RKVC_BUILD/CMakeCache.txt"
+    if [[ -f "$cache" ]] && grep -q "CMAKE_MAKE_PROGRAM.*ninja" "$cache"; then
+        echo "ninja"
+    else
+        echo "make"
+    fi
+}
+
 check_deps() {
     local missing=()
-    for cmd in gcc make pkg-config ninja patchelf; do
+    for cmd in gcc make pkg-config patchelf; do
         command -v "$cmd" &>/dev/null || missing+=("$cmd")
     done
     if [[ ${#missing[@]} -gt 0 ]]; then
@@ -87,13 +109,18 @@ build_rkvc() {
     echo "=== 构建 rkvc ==="
     [[ $CLEAN -eq 1 ]] && rm -rf "$RKVC_BUILD"
 
-    cmake -B "$RKVC_BUILD" -G Ninja \
+    local gen
+    gen="$(detect_generator)"
+    echo "--- 使用生成器: $gen ---"
+
+    cmake -B "$RKVC_BUILD" -G "$gen" \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_INSTALL_RPATH_USE_LINK_PATH=ON \
-        -DFFMPEG_ROOT="$FFMPEG_PREFIX" \
         "$PROJECT_DIR"
 
-    ninja -C "$RKVC_BUILD"
+    local build_cmd
+    build_cmd="$(detect_build_cmd)"
+    $build_cmd -C "$RKVC_BUILD"
     echo "--- rkvc 构建完成 ---"
 }
 
@@ -108,12 +135,28 @@ package() {
         [[ -f "$RKVC_BUILD/$tool" ]] && cp "$RKVC_BUILD/$tool" "$OUT_DIR/$PKG_NAME/bin/"
     done
 
-    for so in librkvc.so.0.1.0 librkvc.so.0 librkvc.so; do
-        [[ -f "$RKVC_BUILD/$so" ]] && cp -a "$RKVC_BUILD/$so" "$OUT_DIR/$PKG_NAME/lib/"
+    # librkvc 版本号随项目变化，用通配符匹配
+    local rkvc_real
+    rkvc_real="$(ls -1 "$RKVC_BUILD"/librkvc.so.*.*.* 2>/dev/null | sort -V | tail -1)"
+    if [[ -f "$rkvc_real" ]]; then
+        cp -a "$rkvc_real" "$OUT_DIR/$PKG_NAME/lib/"
+        local rkvc_base rkvc_short
+        rkvc_base="$(basename "$rkvc_real" | sed 's/\.[0-9]*\.[0-9]*\.[0-9]*$//')"  # librkvc.so.0
+        rkvc_short="$(basename "$rkvc_real" | sed 's/\.so\..*/.so/')"                # librkvc.so
+        ln -sf "$(basename "$rkvc_real")" "$OUT_DIR/$PKG_NAME/lib/$rkvc_base"
+        ln -sf "$(basename "$rkvc_real")" "$OUT_DIR/$PKG_NAME/lib/$rkvc_short"
+    fi
+
+    for so in librkvc.so.0 librkvc.so; do
+        [[ -f "$RKVC_BUILD/$so" ]] && cp -a "$RKVC_BUILD/$so" "$OUT_DIR/$PKG_NAME/lib/" 2>/dev/null || true
     done
 
-    echo "--- 复制 ffmpeg 动态库 (仅限自行编译产出) ---"
-    for lib in "$FFMPEG_PREFIX/lib/"lib*.so.*; do
+    echo "--- 复制 ffmpeg 动态库 (仅限 rkvc 依赖) ---"
+    # rkvc 只依赖 libavcodec / libavformat / libavutil
+    for name in libavcodec libavformat libavutil; do
+        # 取最大版本号的真实文件
+        local lib
+        lib="$(ls -1 "$FFMPEG_PREFIX/lib/${name}.so."* 2>/dev/null | grep -v '\.so$' | sort -V | tail -1)"
         [[ -f "$lib" ]] || continue
         [[ -L "$lib" ]] && continue
         cp "$lib" "$OUT_DIR/$PKG_NAME/lib/"
@@ -123,10 +166,13 @@ package() {
     cd "$OUT_DIR/$PKG_NAME/lib"
     for real in lib*.so.*; do
         [[ -f "$real" ]] || continue
-        base="$(echo "$real" | sed 's/\.\([0-9]*\)\.[0-9]*\.[0-9]*$/.\1/')"
-        short="$(echo "$real" | sed 's/\..*//')"
+        [[ -L "$real" ]] && continue
+        # libfoo.so.1.2.3 → libfoo.so.1
+        base="$(echo "$real" | sed 's/\.\([0-9]*\.[0-9]*\.[0-9]*\)$//')"
+        # libfoo.so.1.2.3 → libfoo.so
+        short="$(echo "$real" | sed 's/\.so\..*/.so/')"
         ln -sf "$real" "$base" 2>/dev/null || true
-        ln -sf "$base" "$short" 2>/dev/null || true
+        ln -sf "$real" "$short" 2>/dev/null || true
     done
     cd "$PROJECT_DIR"
 
@@ -134,6 +180,20 @@ package() {
     for tool in "$OUT_DIR/$PKG_NAME/bin/"*; do
         patchelf --set-rpath '$ORIGIN/../lib' "$tool" && \
             echo "  $(basename "$tool")"
+    done
+    # librkvc 依赖 ffmpeg 库，也需要 $ORIGIN RPATH
+    local rkvc_so
+    rkvc_so="$(ls -1 "$OUT_DIR/$PKG_NAME/lib"/librkvc.so.*.*.* 2>/dev/null | sort -V | tail -1)"
+    if [[ -f "$rkvc_so" ]]; then
+        patchelf --set-rpath '$ORIGIN' "$rkvc_so" && \
+            echo "  $(basename "$rkvc_so")"
+    fi
+    # ffmpeg 自身库之间也有依赖 (avcodec → avutil)
+    for lib in "$OUT_DIR/$PKG_NAME/lib/"libav*.so.*; do
+        [[ -f "$lib" ]] || continue
+        [[ -L "$lib" ]] && continue
+        patchelf --set-rpath '$ORIGIN' "$lib" && \
+            echo "  $(basename "$lib")"
     done
 
     cp "$PROJECT_DIR"/include/rkvc/*.h "$OUT_DIR/$PKG_NAME/include/rkvc/"
@@ -158,12 +218,17 @@ EOF
 
     echo "--- 验证自包含库 ---"
     local unresolved=0
-    (cd "$PKG_NAME" && LD_LIBRARY_PATH=lib ldd bin/rkvc_info 2>&1) | while read -r line; do
+    while read -r line; do
         if echo "$line" | grep -q "not found"; then
             echo "  错误: $line"
             unresolved=1
         fi
-    done
+    done < <(cd "$OUT_DIR/$PKG_NAME" && LD_LIBRARY_PATH=lib ldd bin/rkvc_info 2>&1)
+    if [[ $unresolved -eq 0 ]]; then
+        echo "  OK: 所有依赖已解析"
+    else
+        echo "  警告: 存在未解析依赖"
+    fi
 
     echo "--- 目标板前置依赖 (须由系统包管理器提供) ---"
     echo "  librockchip-mpp1  (RKMPP 硬件编解码)"

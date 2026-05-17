@@ -134,33 +134,39 @@ rkvc_err rkvc_stream_push(rkvc_stream *s, const void *data)
     if (s->config.direction == RKVC_STREAM_ENCODE) {
         /* data 是 rkvc_frame* */
         rkvc_frame *f = (rkvc_frame *)data;
+        rkvc_frame *to_encode = f;
 
-        /* 阻塞式 push: 持续 drain + 重试直到帧被接受 */
-        rkvc_err err = rkvc_encoder_send_frame(s->enc, f);
+        /* 尺寸或格式不匹配时自动 RGA 缩放 */
+        int need_scale = (f->info.width   != s->config.width)  ||
+                         (f->info.height  != s->config.height) ||
+                         (f->info.format  != s->config.input_format);
+        if (need_scale) {
+            rkvc_scale_config sc = {
+                .dst_width  = s->config.width,
+                .dst_height = s->config.height,
+                .dst_format = s->config.input_format,
+            };
+            rkvc_err sc_err = rkvc_frame_scale(f, &to_encode, &sc);
+            if (sc_err != RKVC_OK)
+                return sc_err;
+        }
 
+        rkvc_err err = rkvc_encoder_send_frame(s->enc, to_encode);
+
+        /* 编码器满时短暂等待后重试，让 MPP async 线程产出编码包 */
         int retries = 0;
         while (err == RKVC_ERR_AGAIN && retries < 1000) {
-            /* 编码器满: drain 所有可用包 */
-            rkvc_packet pkt;
-            while (rkvc_encoder_receive_packet(s->enc, &pkt) == RKVC_OK) {
-                s->stats.frames_out++;
-            }
-            /* 短暂让出 CPU 给 MPP async 线程 */
             struct timespec ts = {0, 100000}; /* 100us */
             nanosleep(&ts, NULL);
-            /* 重新尝试发送 */
-            err = rkvc_encoder_send_frame(s->enc, f);
+            err = rkvc_encoder_send_frame(s->enc, to_encode);
             retries++;
         }
 
-        if (err == RKVC_OK) {
+        if (need_scale)
+            rkvc_frame_unref(to_encode);
+
+        if (err == RKVC_OK)
             s->stats.frames_in++;
-            /* 立即取出已编码的包 */
-            rkvc_packet pkt;
-            while (rkvc_encoder_receive_packet(s->enc, &pkt) == RKVC_OK) {
-                s->stats.frames_out++;
-            }
-        }
 
         return err;
     } else {
@@ -170,15 +176,8 @@ rkvc_err rkvc_stream_push(rkvc_stream *s, const void *data)
         rkvc_err err = rkvc_decoder_send_packet(s->dec,
                                                 pkt->data, pkt->size,
                                                 pkt->pts, pkt->dts);
-        if (err == RKVC_OK) {
+        if (err == RKVC_OK)
             s->stats.frames_in++;
-            /* 尝试立即取出解码帧 */
-            rkvc_frame *f = NULL;
-            while (rkvc_decoder_receive_frame(s->dec, &f) == RKVC_OK) {
-                rkvc_frame_unref(f);
-                s->stats.frames_out++;
-            }
-        }
 
         return err;
     }

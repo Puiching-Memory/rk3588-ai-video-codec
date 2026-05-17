@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 project(rkvc
-    VERSION 0.1.0
+    VERSION 0.1.1
     DESCRIPTION "RK3588 H.265 Video Codec Library (RKMPP)"
     LANGUAGES C
 )
@@ -42,10 +42,11 @@ set(MPP_LIB_DIR "${MPP_BUILD_DIR}/mpp")
 # FFmpeg 静态库存在循环依赖，需要用 --start-group/--end-group 包裹
 set(FFMPEG_LIBS -Wl,--start-group avcodec avformat avutil -Wl,--end-group)
 # 外部依赖：MPP、zlib、drm
-set(EXTRA_LIBS rockchip_mpp z drm pthread m)
+set(EXTRA_LIBS rockchip_mpp z drm pthread m rga rt)
 set(RKVC_SOURCES
     lib/init.c
     lib/frame.c
+    lib/scale.c
     lib/encoder.c
     lib/decoder.c
     lib/stream.c
@@ -151,7 +152,7 @@ endif()
 if(RKVC_BUILD_EXAMPLES)
     set(EXAMPLE_TARGETS "")
 
-    foreach(EXAMPLE encode_file decode_file stream_encode stream_decode transcode latency_test psnr_test)
+    foreach(EXAMPLE encode_file decode_file stream_encode stream_decode stream_transcode stream_device_pair transcode latency_test psnr_test)
         if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/examples/${EXAMPLE}.c")
             add_executable(example_${EXAMPLE} examples/${EXAMPLE}.c)
             target_link_libraries(example_${EXAMPLE} PRIVATE rkvc)
@@ -293,6 +294,7 @@ if(RKVC_BUILD_TESTS)
         tests/test_contracts.c
         tests/test_internal.c
         tests/test_hardware.c
+        tests/test_scale.c
     )
 
     if(RKVC_ENABLE_FAULT_INJECTION)

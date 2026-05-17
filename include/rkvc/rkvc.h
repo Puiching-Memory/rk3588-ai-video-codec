@@ -49,6 +49,7 @@
 
 #include "rkvc/types.h"
 #include "rkvc/frame.h"
+#include "rkvc/scale.h"
 #include "rkvc/encoder.h"
 #include "rkvc/decoder.h"
 #include "rkvc/stream.h"

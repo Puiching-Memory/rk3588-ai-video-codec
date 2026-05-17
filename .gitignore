@@ -5,6 +5,7 @@ build-debug/
 build-tests/
 build-asan/
 build-coverage/
+build-portable/
 *.o
 *.a
 *.so
@@ -42,3 +43,8 @@ site/
 .cache/
 .scratch/
 nohup.out
+
+# Test media files
+*.mp4
+*.h264
+*.h265
