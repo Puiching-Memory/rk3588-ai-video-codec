@@ -26,7 +26,8 @@ jobs:
       - name: Install librga
         run: |
           git clone --depth 1 https://github.com/airockchip/librga.git /tmp/librga
-          sudo cp -r /tmp/librga/include/rga /usr/local/include/
+          sudo mkdir -p /usr/local/include/rga
+          sudo cp /tmp/librga/include/*.h /usr/local/include/rga/
           sudo cp /tmp/librga/libs/Linux/gcc-aarch64/librga.so /usr/local/lib/
           sudo ldconfig
 
@@ -64,7 +65,8 @@ jobs:
       - name: Install librga
         run: |
           git clone --depth 1 https://github.com/airockchip/librga.git /tmp/librga
-          sudo cp -r /tmp/librga/include/rga /usr/local/include/
+          sudo mkdir -p /usr/local/include/rga
+          sudo cp /tmp/librga/include/*.h /usr/local/include/rga/
           sudo cp /tmp/librga/libs/Linux/gcc-aarch64/librga.so /usr/local/lib/
           sudo ldconfig
 
@@ -133,7 +135,8 @@ jobs:
       - name: Install librga
         run: |
           git clone --depth 1 https://github.com/airockchip/librga.git /tmp/librga
-          sudo cp -r /tmp/librga/include/rga /usr/local/include/
+          sudo mkdir -p /usr/local/include/rga
+          sudo cp /tmp/librga/include/*.h /usr/local/include/rga/
           sudo cp /tmp/librga/libs/Linux/gcc-aarch64/librga.so /usr/local/lib/
           sudo ldconfig
 
