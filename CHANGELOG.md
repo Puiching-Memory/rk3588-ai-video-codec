@@ -2,17 +2,32 @@
 
 本文档记录 rkvc 各版本的主要变更。
 
-## [0.1.2] - 2026-05-17
+## [0.1.2] - 2026-05-18
+
+### 新增
+
+- **真实 UDP 网络传输** (`examples/stream_device_pair.c`)
+  - 将原来的三种模拟模式（`ring`/`shm`/`rtp` 均为进程内内存模拟）全部替换为真实网络传输：
+    - `udp` — 原始编码帧 over UDP Socket（16B 头: frag_id+frag_total+frame_len+pts, 大帧自动分片最多 16 片）
+    - `rtp` — RTP 封包 over UDP Socket（H.265 NAL 分片 ≤1400B, Marker 位标记帧边界, SSRC）
+  - 支持 `-r send|recv|both` 单角色/双角色部署模式，真正实现两台物理 RK3588 之间的流式传输
+  - 一个板卡解码文件 + 重编码 → UDP 发送，另一个板卡 UDP 接收 + 实时解码
+  - 提取通用 UDP Socket 辅助层，`udp` 和 `rtp` 两通道共享
+- **UDP 大帧分片与重组**: IDR 帧可达 80–120 KB，超过单 UDP 数据报 65507 字节上限，`udp` 通道新增分片协议（`frag_id`/`frag_total`/`frag_mask` 位图去重），接收端自动组装交付
+- **API 文档 UDP 传输须知**: `docs/api.md` 新增 warning 块，说明编码帧可能超过 UDP 数据报大小，给出分片协议头字段参考
 
 ### 修复
 
 - **转码示例降分辨率失败**: `examples/transcode.c` 直接将解码帧送入不同分辨率的编码器导致 RKMPP 报 `invalid parameter`，修复为当分辨率不匹配时先用 `rkvc_frame_scale()` RGA 硬件缩放再送入编码器。
-- **打包脚本符号链接**: `scripts/package-portable.sh` 修复动态库中间层级符号链接缺失（如 `libavcodec.so.60`），改为递归创建所有中间版本链接。
+- **打包脚本符号链接**: `scripts/package-portable.sh` 修复动态库符号链接过多问题（如 `libavcodec.so.60.31` 中间层级），简化为标准 `libfoo.so → libfoo.so.X → libfoo.so.X.Y.Z`，`librkvc` 链接统一由循环生成。
 - **测试脚本版本兼容**: `scripts/test-portable.sh` ffmpeg 库检查改为通配符匹配，不再硬编码具体版本号。
 
 ### 变更
 
-- 版本号提升至 0.1.2。
+- **打包脚本优化** (`scripts/package-portable.sh`)
+  - 示例程序二进制（`example_*`）和源码（`examples/*.c`）自动打包到 `examples/bin/` 和 `examples/src/`
+  - 示例二进制 RPATH 设置为 `$ORIGIN/../../lib`
+- `rtp` 接收端设置 1 秒 `SO_RCVTIMEO` 超时，`finished` 标志改为 `__sync_synchronize` 保证跨线程可见
 
 ## [0.1.1] - 2026-05-17
 

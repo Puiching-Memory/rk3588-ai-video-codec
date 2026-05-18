@@ -112,6 +112,21 @@ rkvc_stream_finish(s);
 rkvc_stream_close(s);
 ```
 
+!!! warning "UDP 传输须知：编码帧可能超过 UDP 数据报大小"
+    硬件编码器输出的 **IDR 帧**（关键帧）可能达到 **80–120 KB**，远超单个 UDP 数据报上限 **65507 字节**。
+    如果通过 UDP 传输 `rkvc_packet.data`，必须自行实现**分片与重组**。
+
+    **示例**（参考 `examples/stream_device_pair.c`，通道 `udp`）：
+
+    | 协议头结构        | 字段                     |
+    | ----------------- | ------------------------ |
+    | `frag_id` (2B)    | 分片序号 (network order) |
+    | `frag_total` (2B) | 总分片数                 |
+    | `frame_len` (4B)  | 完整帧总长               |
+    | `pts` (8B)        | 时间戳 (big-endian)      |
+
+    发送端按 `UDP_FRAG_PAYLOAD = 65491` 字节分片，接收端按 `frag_mask` 位图收集并去重，全部到达后组装交付。
+
 ## CLI 工具
 
 ### 编码

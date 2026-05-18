@@ -1,14 +1,21 @@
 /**
  * @file stream_device_pair.c
- * @brief 示例: 模拟双设备流式传输（多种通道模式）。
+ * @brief 示例: 双设备流式传输 (真实网络)。
  *
- * 模拟两台设备之间的实时视频传输，支持三种通道模式:
- *   ring — 环形缓冲区 (默认, 模拟 UDP 局域网)
- *   shm  — 共享内存 IPC (模拟 RTOS 零拷贝消息队列)
- *   rtp  — RTP/PS 封包 (模拟 GB/T 28181 国标传输)
+ * 支持两种真实网络传输模式:
+ *   udp — 原始编码帧 over UDP (16B头: frag_id+frag_total+len+pts, 大帧自动分片)
+ *   rtp — RTP 封包 over UDP (GB/T 28181, H.265 NAL 分片 ≤1400B)
  *
  * 用法:
- *   stream_device_pair -i input.h265 [-c ring|shm|rtp] [-s WxH] [-b BPS]
+ *   # 本机 test
+ *   stream_device_pair -i input.h265 -c udp -r both --dst-ip 127.0.0.1
+ *   stream_device_pair -i input.h265 -c rtp -r both --dst-ip 127.0.0.1
+ *
+ *   # 双设备部署
+ *   # 设备 A (发送端):
+ *   stream_device_pair -i input.h265 -c udp -r send --dst-ip <接收端IP> --dst-port 9000
+ *   # 设备 B (接收端):
+ *   stream_device_pair -c udp -r recv --bind-port 9000
  */
 
 #include "rkvc/rkvc.h"
@@ -19,9 +26,9 @@
 #include <time.h>
 #include <pthread.h>
 #include <unistd.h>
-#include <sys/mman.h>
-#include <sys/stat.h>
-#include <fcntl.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
 
 static double now_sec(void)
 {
@@ -31,13 +38,12 @@ static double now_sec(void)
 }
 
 /* ════════════════════════════════════════════════════════════════════
- * 通道抽象层 (仅在本示例中使用，不暴露为库 API)
+ * 通道抽象层
  * ════════════════════════════════════════════════════════════════════ */
 
 typedef enum {
-    CHAN_RING = 0,   /* 环形缓冲区 */
-    CHAN_SHM  = 1,   /* 共享内存 IPC */
-    CHAN_RTP  = 2,   /* RTP/PS 国标 */
+    CHAN_UDP = 0,   /* 原始编码帧 over UDP */
+    CHAN_RTP = 1,   /* RTP 封包 over UDP (GB/T 28181) */
 } chan_type;
 
 typedef struct {
@@ -47,7 +53,6 @@ typedef struct {
     int            key_frame;
 } chan_frame;
 
-/* 通道接口 */
 typedef struct channel channel;
 typedef void   (*chan_send_fn)(channel *ch, const chan_frame *f);
 typedef int    (*chan_recv_fn)(channel *ch, chan_frame *out);
@@ -62,367 +67,417 @@ struct channel {
     chan_finish_fn finish;
     chan_destroy_fn destroy;
 
-    /* 统计 */
     uint64_t pkts_sent;
     uint64_t pkts_recv;
     uint64_t bytes_sent;
     uint64_t bytes_recv;
-    double   total_latency_ms;  /* 累计传输延迟 */
-    int      latency_samples;
 };
 
-/* ── 模式 A: 环形缓冲区 (模拟 UDP 局域网) ───────────────────────── */
+/* ════════════════════════════════════════════════════════════════════
+ * 通用 UDP Socket 辅助
+ * ════════════════════════════════════════════════════════════════════ */
 
-#define RING_CAP 128
-
-typedef struct {
-    channel   base;
-    chan_frame slots[RING_CAP];
-    int       head, tail, count;
-    int       finished;
-    pthread_mutex_t lock;
-    pthread_cond_t  not_empty;
-    pthread_cond_t  not_full;
-} ring_channel;
-
-static void ring_send(channel *ch, const chan_frame *f)
+static int udp_socket_create(void)
 {
-    ring_channel *r = (ring_channel *)ch;
-    pthread_mutex_lock(&r->lock);
-    while (r->count >= RING_CAP)
-        pthread_cond_wait(&r->not_full, &r->lock);
-
-    r->slots[r->tail] = *f;
-    r->slots[r->tail].data = malloc(f->size);
-    memcpy((void *)r->slots[r->tail].data, f->data, f->size);
-
-    r->tail = (r->tail + 1) % RING_CAP;
-    r->count++;
-    ch->pkts_sent++;
-    ch->bytes_sent += f->size;
-
-    pthread_cond_signal(&r->not_empty);
-    pthread_mutex_unlock(&r->lock);
-}
-
-static int ring_recv(channel *ch, chan_frame *out)
-{
-    ring_channel *r = (ring_channel *)ch;
-    pthread_mutex_lock(&r->lock);
-    while (r->count == 0 && !r->finished)
-        pthread_cond_wait(&r->not_empty, &r->lock);
-    if (r->count == 0 && r->finished) {
-        pthread_mutex_unlock(&r->lock);
+    int fd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (fd < 0) {
+        perror("[SOCK] socket");
         return -1;
     }
+    int opt = 1;
+    setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    return fd;
+}
 
-    *out = r->slots[r->head];
-    r->head = (r->head + 1) % RING_CAP;
-    r->count--;
-    ch->pkts_recv++;
-    ch->bytes_recv += out->size;
+static int udp_socket_bind(int fd, int port)
+{
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family      = AF_INET;
+    addr.sin_addr.s_addr = INADDR_ANY;
+    addr.sin_port        = htons((uint16_t)port);
 
-    pthread_cond_signal(&r->not_full);
-    pthread_mutex_unlock(&r->lock);
+    if (bind(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
+        perror("[SOCK] bind");
+        return -1;
+    }
     return 0;
 }
 
-static void ring_finish(channel *ch)
+static int udp_set_dst(struct sockaddr_in *dst, const char *ip, int port)
 {
-    ring_channel *r = (ring_channel *)ch;
-    pthread_mutex_lock(&r->lock);
-    r->finished = 1;
-    pthread_cond_broadcast(&r->not_empty);
-    pthread_mutex_unlock(&r->lock);
-}
-
-static void ring_destroy(channel *ch)
-{
-    ring_channel *r = (ring_channel *)ch;
-    pthread_mutex_destroy(&r->lock);
-    pthread_cond_destroy(&r->not_empty);
-    pthread_cond_destroy(&r->not_full);
-}
-
-static channel *ring_create(void)
-{
-    ring_channel *r = calloc(1, sizeof(*r));
-    r->base.type = CHAN_RING;
-    r->base.name = "ring (UDP 局域网模拟)";
-    r->base.send = ring_send;
-    r->base.recv = ring_recv;
-    r->base.finish = ring_finish;
-    r->base.destroy = ring_destroy;
-    pthread_mutex_init(&r->lock, NULL);
-    pthread_cond_init(&r->not_empty, NULL);
-    pthread_cond_init(&r->not_full, NULL);
-    return &r->base;
-}
-
-/* ── 模式 B: 共享内存 IPC (模拟 RTOS 消息队列) ──────────────────── */
-
-/*
- * 模拟 RTOS 共享内存传输:
- *   - 固定大小的内存池，通过 mmap 共享
- *   - 使用 volatile 标志实现无锁同步（单生产者-单消费者）
- *   - 零拷贝：发送端写入 shm，接收端直接读取同一地址
- */
-
-#define SHM_POOL_SIZE  (8 * 1024 * 1024)  /* 8 MB */
-#define SHM_SLOTS      256
-
-typedef struct {
-    uint32_t offset;    /* 数据在 pool 中的偏移 */
-    uint32_t size;
-    int64_t  pts;
-    int      key_frame;
-    volatile uint32_t ready; /* 生产者写 1 = 数据就绪 */
-} shm_slot;
-
-typedef struct {
-    channel    base;
-    uint8_t   *pool;         /* 共享内存池 */
-    uint32_t   pool_off;     /* 当前写入偏移 */
-    shm_slot  *slots;        /* 共享 slot 数组 */
-    volatile uint32_t head;  /* 消费者读指针 */
-    volatile uint32_t tail;  /* 生产者写指针 */
-    int        finished;
-    char       shm_name[64];
-} shm_channel;
-
-static void shm_send(channel *ch, const chan_frame *f)
-{
-    shm_channel *s = (shm_channel *)ch;
-
-    /* 等待 slot 有空间 (绕环) */
-    while (((s->tail + 1) % SHM_SLOTS) == s->head) {
-        struct timespec ts = {0, 100000}; /* 100us */
-        nanosleep(&ts, NULL);
-    }
-
-    /* 分配 pool 空间 (环形分配) */
-    if (s->pool_off + f->size > SHM_POOL_SIZE)
-        s->pool_off = 0;
-
-    /* 零拷贝写入: 直接写入共享内存 */
-    memcpy(s->pool + s->pool_off, f->data, f->size);
-
-    /* 填写 slot 元数据 */
-    uint32_t idx = s->tail % SHM_SLOTS;
-    s->slots[idx].offset = s->pool_off;
-    s->slots[idx].size = f->size;
-    s->slots[idx].pts = f->pts;
-    s->slots[idx].key_frame = f->key_frame;
-    __sync_synchronize(); /* 内存屏障 */
-    s->slots[idx].ready = 1;
-
-    s->pool_off += f->size;
-    __sync_synchronize();
-    s->tail++;
-
-    ch->pkts_sent++;
-    ch->bytes_sent += f->size;
-}
-
-static int shm_recv(channel *ch, chan_frame *out)
-{
-    shm_channel *s = (shm_channel *)ch;
-
-    while (s->head == s->tail && !s->finished) {
-        struct timespec ts = {0, 100000};
-        nanosleep(&ts, NULL);
-    }
-    if (s->head == s->tail && s->finished)
+    memset(dst, 0, sizeof(*dst));
+    dst->sin_family = AF_INET;
+    dst->sin_port   = htons((uint16_t)port);
+    if (inet_pton(AF_INET, ip, &dst->sin_addr) != 1) {
+        fprintf(stderr, "[SOCK] 无效 IP: %s\n", ip);
         return -1;
-
-    uint32_t idx = s->head % SHM_SLOTS;
-
-    /* 等待 slot ready */
-    while (!s->slots[idx].ready) {
-        struct timespec ts = {0, 10000};
-        nanosleep(&ts, NULL);
     }
-
-    /* 拷贝出来（接收端需要 free，不能直接引用 shm） */
-    uint8_t *copy = malloc(s->slots[idx].size);
-    memcpy(copy, s->pool + s->slots[idx].offset, s->slots[idx].size);
-    out->data = copy;
-    out->size = s->slots[idx].size;
-    out->pts = s->slots[idx].pts;
-    out->key_frame = s->slots[idx].key_frame;
-
-    s->slots[idx].ready = 0;
-    __sync_synchronize();
-    s->head++;
-
-    ch->pkts_recv++;
-    ch->bytes_recv += out->size;
     return 0;
 }
 
-static void shm_finish(channel *ch)
+static ssize_t udp_send_raw(int fd, const struct sockaddr_in *dst,
+                            const void *data, size_t len)
 {
-    shm_channel *s = (shm_channel *)ch;
-    __sync_synchronize();
-    s->finished = 1;
+    return sendto(fd, data, len, 0, (const struct sockaddr *)dst, sizeof(*dst));
 }
 
-static void shm_destroy(channel *ch)
+static ssize_t udp_recv_raw(int fd, void *buf, size_t bufsz,
+                            struct sockaddr_in *src)
 {
-    shm_channel *s = (shm_channel *)ch;
-    munmap(s->pool, SHM_POOL_SIZE);
-    munmap(s->slots, SHM_SLOTS * sizeof(shm_slot));
+    socklen_t srclen = sizeof(*src);
+    return recvfrom(fd, buf, bufsz, 0, (struct sockaddr *)src, &srclen);
 }
 
-static channel *shm_create(void)
-{
-    shm_channel *s = calloc(1, sizeof(*s));
-    s->base.type = CHAN_SHM;
-    s->base.name = "shm (RTOS 共享内存零拷贝)";
-    s->base.send = shm_send;
-    s->base.recv = shm_recv;
-    s->base.finish = shm_finish;
-    s->base.destroy = shm_destroy;
-
-    /* 匿名 mmap 模拟共享内存 */
-    s->pool = mmap(NULL, SHM_POOL_SIZE, PROT_READ | PROT_WRITE,
-                   MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    s->slots = mmap(NULL, SHM_SLOTS * sizeof(shm_slot), PROT_READ | PROT_WRITE,
-                    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    memset(s->slots, 0, SHM_SLOTS * sizeof(shm_slot));
-
-    return &s->base;
-}
-
-/* ── 模式 C: RTP 封包 (模拟 GB/T 28181 国标传输) ──────────────────── */
-
-/*
- * GB/T 28181 传输层模拟:
- *   - H.265 NAL 分片为 RTP 包 (≤ 1400 bytes payload)
- *   - RTP V=2, marker bit 标记帧边界
- *   - 大帧自动分片，接收端重组
- *   - 模拟 UDP 传输的包序和分片行为
+/* ════════════════════════════════════════════════════════════════════
+ * 模式 A: 原始编码帧 over UDP
+ * ════════════════════════════════════════════════════════════════════
+ *
+ * 帧封装: 16B 头 + 数据分片
+ *   头结构: uint16 frag_id + uint16 frag_total + uint32 frame_len + uint64 pts
+ *   大帧自动分片 (IDR 帧可达 100+KB), 接收端按 PTS 缓冲重组
  */
 
-#define RTP_PAYLOAD_MAX 1400
-#define RTP_RING_CAP    512
+#define UDP_FRAG_HEADER  16   /* frag_id(2) + frag_total(2) + frame_len(4) + pts(8) */
+#define UDP_FRAG_PAYLOAD 65491 /* 65507 - 16 */
+#define UDP_MAX_PAYLOAD   65507
+#define UDP_MAX_FRAGS     16
 
 typedef struct {
     uint8_t *data;
     int      size;
-} rtp_pkt;
+    int      capacity;
+    int      frag_total;
+    uint8_t  frag_mask[2];  /* bitmap: frag_mask[i/8] |= (1 << (i%8)) */
+    int64_t  pts;
+} udp_reasm;
 
 typedef struct {
-    channel   base;
-    rtp_pkt   ring[RTP_RING_CAP];
-    volatile int head, tail, count;
-    volatile int finished;
-    pthread_mutex_t lock;
-    pthread_cond_t  not_empty;
-    pthread_cond_t  not_full;
+    channel          base;
+    int              send_fd;
+    int              recv_fd;
+    struct sockaddr_in dst_addr;
+    int              has_dst;
+    udp_reasm        reasm;
+} udp_channel;
+
+static void udp_send_one(udp_channel *u, int frag_id, int frag_total,
+                         uint32_t frame_len, int64_t pts,
+                         const uint8_t *data, int len)
+{
+    uint8_t hdr[UDP_FRAG_HEADER];
+    uint16_t net_frag_id    = htons((uint16_t)frag_id);
+    uint16_t net_frag_total = htons((uint16_t)frag_total);
+    uint32_t net_frame_len  = htonl(frame_len);
+    uint64_t net_pts        = htobe64((uint64_t)pts);
+    memcpy(hdr,      &net_frag_id,    2);
+    memcpy(hdr + 2,  &net_frag_total, 2);
+    memcpy(hdr + 4,  &net_frame_len,  4);
+    memcpy(hdr + 8,  &net_pts,        8);
+
+    struct iovec iov[2] = {
+        { .iov_base = hdr,       .iov_len = UDP_FRAG_HEADER },
+        { .iov_base = (void *)data, .iov_len = (size_t)len },
+    };
+    struct msghdr msg = {
+        .msg_name    = &u->dst_addr,
+        .msg_namelen = sizeof(u->dst_addr),
+        .msg_iov     = iov,
+        .msg_iovlen  = 2,
+    };
+
+    ssize_t sent = sendmsg(u->send_fd, &msg, 0);
+    if (sent > 0) {
+        u->base.bytes_sent += (uint64_t)sent;
+    } else {
+        perror("[UDP] sendmsg");
+    }
+}
+
+static void udp_send(channel *ch, const chan_frame *f)
+{
+    udp_channel *u = (udp_channel *)ch;
+    if (u->send_fd < 0 || !u->has_dst) return;
+
+    int total    = f->size;
+    int n_frags  = (total + UDP_FRAG_PAYLOAD - 1) / UDP_FRAG_PAYLOAD;
+    if (n_frags > UDP_MAX_FRAGS) {
+        fprintf(stderr, "[UDP] 帧过大需 %d 分片 (>%d), 丢弃\n",
+                n_frags, UDP_MAX_FRAGS);
+        return;
+    }
+
+    if (n_frags > 1)
+        printf("[UDP] 大帧分片: %d bytes → %d 片\n", total, n_frags);
+
+    for (int i = 0, off = 0; i < n_frags; i++) {
+        int chunk = total - off;
+        if (chunk > UDP_FRAG_PAYLOAD) chunk = UDP_FRAG_PAYLOAD;
+        udp_send_one(u, i, n_frags, (uint32_t)total, f->pts,
+                     f->data + off, chunk);
+        off += chunk;
+    }
+    ch->pkts_sent++;
+}
+
+static void reasm_reset(udp_reasm *r, int frag_total, int frame_len, int64_t pts)
+{
+    if (r->capacity < frame_len) {
+        free(r->data);
+        r->data     = malloc(frame_len);
+        r->capacity = frame_len;
+    }
+    r->size       = 0;
+    r->frag_total = frag_total;
+    r->pts        = pts;
+    memset(r->frag_mask, 0, sizeof(r->frag_mask));
+}
+
+static int reasm_complete(const udp_reasm *r)
+{
+    if (r->frag_total <= 0) return 0;
+    for (int i = 0; i < r->frag_total; i++) {
+        if (!(r->frag_mask[i / 8] & (1 << (i % 8)))) return 0;
+    }
+    return 1;
+}
+
+static int udp_recv(channel *ch, chan_frame *out)
+{
+    udp_channel *u = (udp_channel *)ch;
+    if (u->recv_fd < 0) return -1;
+
+    uint8_t buf[UDP_MAX_PAYLOAD];
+    struct sockaddr_in src;
+
+    for (;;) {
+        ssize_t n = udp_recv_raw(u->recv_fd, buf, sizeof(buf), &src);
+        if (n < 0) {
+            perror("[UDP] recvfrom");
+            return -1;
+        }
+        if (n <= UDP_FRAG_HEADER) {
+            /* 空帧 = 结束信号 */
+            return -1;
+        }
+
+        uint16_t frag_id, frag_total;
+        uint32_t frame_len;
+        int64_t  pts;
+        memcpy(&frag_id,    buf,     2); frag_id    = ntohs(frag_id);
+        memcpy(&frag_total, buf + 2, 2); frag_total = ntohs(frag_total);
+        memcpy(&frame_len,  buf + 4, 4); frame_len  = ntohl(frame_len);
+        memcpy(&pts,        buf + 8, 8); pts         = (int64_t)be64toh(pts);
+
+        int payload_len = (int)n - UDP_FRAG_HEADER;
+        if (payload_len <= 0) continue;
+
+        udp_reasm *r = &u->reasm;
+
+        /* 新帧开始: 重置组装缓冲 */
+        if (frag_id == 0)
+            reasm_reset(r, frag_total, (int)frame_len, pts);
+
+        /* 忽略无法匹配的碎片 */
+        if (r->frag_total != frag_total || r->pts != pts)
+            continue;
+        if (frag_id >= frag_total)
+            continue;
+
+        /* 去重: 已收到则跳过 */
+        if (r->frag_mask[frag_id / 8] & (1 << (frag_id % 8)))
+            continue;
+
+        /* 写入组装缓冲 */
+        int offset = frag_id * UDP_FRAG_PAYLOAD;
+        int copy_n = payload_len;
+        if (offset + copy_n > r->capacity)
+            copy_n = r->capacity - offset;
+        if (copy_n > 0)
+            memcpy(r->data + offset, buf + UDP_FRAG_HEADER, copy_n);
+        r->size += copy_n;
+        r->frag_mask[frag_id / 8] |= (1 << (frag_id % 8));
+
+        ch->bytes_recv += (uint64_t)n;
+
+        /* 检查组装完成 */
+        if (reasm_complete(r)) {
+            out->data      = r->data;
+            out->size      = r->size;
+            out->pts       = r->pts;
+            out->key_frame = 0;
+            ch->pkts_recv++;
+            /* 释放所有权: 调用方负责 free */
+            r->data     = NULL;
+            r->capacity = 0;
+            return 0;
+        }
+    }
+}
+
+static void udp_finish(channel *ch)
+{
+    udp_channel *u = (udp_channel *)ch;
+    if (u->send_fd >= 0 && u->has_dst) {
+        /* 发送全零头作为结束信号 (frag_total=0) */
+        uint8_t zero[UDP_FRAG_HEADER];
+        memset(zero, 0, sizeof(zero));
+        udp_send_raw(u->send_fd, &u->dst_addr, zero, sizeof(zero));
+    }
+}
+
+static void udp_destroy(channel *ch)
+{
+    udp_channel *u = (udp_channel *)ch;
+    if (u->send_fd >= 0) close(u->send_fd);
+    if (u->recv_fd >= 0) close(u->recv_fd);
+    free(u->reasm.data);
+}
+
+static channel *udp_create(int is_sender, int is_receiver,
+                           const char *dst_ip, int dst_port, int bind_port)
+{
+    udp_channel *u = calloc(1, sizeof(*u));
+    if (!u) return NULL;
+    u->base.type    = CHAN_UDP;
+    u->base.name    = "udp (原始帧 over UDP)";
+    u->base.send    = udp_send;
+    u->base.recv    = udp_recv;
+    u->base.finish  = udp_finish;
+    u->base.destroy = udp_destroy;
+    u->send_fd      = -1;
+    u->recv_fd      = -1;
+
+    if (is_sender) {
+        u->send_fd = udp_socket_create();
+        if (u->send_fd < 0) { free(u); return NULL; }
+        if (udp_set_dst(&u->dst_addr, dst_ip, dst_port) < 0) {
+            close(u->send_fd); free(u); return NULL;
+        }
+        u->has_dst = 1;
+        printf("[UDP] 发送端就绪 → %s:%d\n", dst_ip, dst_port);
+    }
+
+    if (is_receiver) {
+        u->recv_fd = udp_socket_create();
+        if (u->recv_fd < 0) {
+            if (u->send_fd >= 0) close(u->send_fd);
+            free(u); return NULL;
+        }
+        if (udp_socket_bind(u->recv_fd, bind_port) < 0) {
+            close(u->recv_fd);
+            if (u->send_fd >= 0) close(u->send_fd);
+            free(u); return NULL;
+        }
+        printf("[UDP] 接收端就绪 :%d\n", bind_port);
+    }
+
+    return &u->base;
+}
+
+/* ════════════════════════════════════════════════════════════════════
+ * 模式 B: RTP 封包 over UDP (GB/T 28181)
+ * ════════════════════════════════════════════════════════════════════
+ *
+ * H.265 NAL → RTP 分片 (≤1400B payload) → UDP Socket 发送
+ * 接收端通过 UDP Socket 收包 → 重组完整帧
+ */
+
+#define RTP_PAYLOAD_MAX  1400
+#define RTP_HEADER_SIZE  12
+
+typedef struct {
+    channel          base;
+    int              send_fd;
+    int              recv_fd;
+    struct sockaddr_in dst_addr;
+    int              has_dst;
+    uint32_t         ssrc;
+    int              finished;
 } rtp_channel;
 
 static void rtp_send(channel *ch, const chan_frame *f)
 {
     rtp_channel *r = (rtp_channel *)ch;
+    if (r->send_fd < 0 || !r->has_dst) return;
 
-    /* 分片为 RTP 包 */
     int total = f->size;
-    int seq = 0;
+    int seq   = 0;
     for (int pos = 0; pos < total; pos += RTP_PAYLOAD_MAX) {
-        int chunk = total - pos;
+        int chunk   = total - pos;
         if (chunk > RTP_PAYLOAD_MAX) chunk = RTP_PAYLOAD_MAX;
         int is_last = (pos + chunk >= total);
 
-        /* RTP header (12 bytes) */
-        int rtp_len = 12 + chunk;
-        uint8_t *rtp_buf = malloc(rtp_len);
+        uint8_t rtp_buf[RTP_HEADER_SIZE + RTP_PAYLOAD_MAX];
+        int64_t ts_val = f->pts & 0xFFFFFFFF;
 
         rtp_buf[0] = 0x80; /* V=2 */
-        rtp_buf[1] = is_last ? (0x80 | 96) : 96; /* marker(bit7) + PT=96 */
+        rtp_buf[1] = is_last ? (0x80 | 96) : 96; /* M + PT=96 */
         rtp_buf[2] = (seq >> 8) & 0xFF;
         rtp_buf[3] = seq & 0xFF;
-        /* timestamp */
-        int64_t ts = f->pts & 0xFFFFFFFF;
-        rtp_buf[4] = (ts >> 24) & 0xFF;
-        rtp_buf[5] = (ts >> 16) & 0xFF;
-        rtp_buf[6] = (ts >>  8) & 0xFF;
-        rtp_buf[7] = (ts >>  0) & 0xFF;
-        /* SSRC */
-        rtp_buf[8]  = 0x01; rtp_buf[9]  = 0x02;
-        rtp_buf[10] = 0x03; rtp_buf[11] = 0x04;
+        rtp_buf[4] = (ts_val >> 24) & 0xFF;
+        rtp_buf[5] = (ts_val >> 16) & 0xFF;
+        rtp_buf[6] = (ts_val >>  8) & 0xFF;
+        rtp_buf[7] = (ts_val >>  0) & 0xFF;
+        rtp_buf[8]  = (r->ssrc >> 24) & 0xFF;
+        rtp_buf[9]  = (r->ssrc >> 16) & 0xFF;
+        rtp_buf[10] = (r->ssrc >>  8) & 0xFF;
+        rtp_buf[11] = (r->ssrc >>  0) & 0xFF;
 
-        memcpy(rtp_buf + 12, f->data + pos, chunk);
+        int rtp_len = RTP_HEADER_SIZE + chunk;
+        memcpy(rtp_buf + RTP_HEADER_SIZE, f->data + pos, chunk);
 
-        /* 发送到 RTP 环形缓冲 */
-        pthread_mutex_lock(&r->lock);
-        while (r->count >= RTP_RING_CAP)
-            pthread_cond_wait(&r->not_full, &r->lock);
-
-        r->ring[r->tail].data = rtp_buf;
-        r->ring[r->tail].size = rtp_len;
-        r->tail = (r->tail + 1) % RTP_RING_CAP;
-        r->count++;
-        ch->bytes_sent += rtp_len;
-
-        pthread_cond_signal(&r->not_empty);
-        pthread_mutex_unlock(&r->lock);
-
+        ssize_t sent = udp_send_raw(r->send_fd, &r->dst_addr, rtp_buf, rtp_len);
+        if (sent > 0) {
+            ch->bytes_sent += (uint64_t)sent;
+        } else {
+            perror("[RTP] sendto");
+        }
         seq++;
     }
-
     ch->pkts_sent++;
 }
 
 static int rtp_recv(channel *ch, chan_frame *out)
 {
     rtp_channel *r = (rtp_channel *)ch;
+    if (r->recv_fd < 0) return -1;
 
     uint8_t *frame_buf = NULL;
     int frame_size = 0;
     int64_t pts = 0;
     int got_marker = 0;
 
-    while (!got_marker) {
-        while (r->count == 0 && !r->finished) {
-            struct timespec ts = {0, 100000};
-            nanosleep(&ts, NULL);
-        }
-        if (r->count == 0 && r->finished) {
-            if (frame_size == 0) return -1;
-            break;
-        }
+    uint8_t pkt_buf[UDP_MAX_PAYLOAD];
+    struct sockaddr_in src;
 
-        pthread_mutex_lock(&r->lock);
-        if (r->count == 0) {
-            pthread_mutex_unlock(&r->lock);
+    while (!got_marker) {
+        ssize_t n = udp_recv_raw(r->recv_fd, pkt_buf, sizeof(pkt_buf), &src);
+        if (n < 0) {
+            if (r->finished && frame_size == 0) return -1;
             continue;
         }
-        rtp_pkt pkt = r->ring[r->head];
-        r->head = (r->head + 1) % RTP_RING_CAP;
-        r->count--;
-        ch->bytes_recv += pkt.size;
-        pthread_cond_signal(&r->not_full);
-        pthread_mutex_unlock(&r->lock);
+        if (n <= RTP_HEADER_SIZE) continue;
 
-        if (pkt.size > 12) {
-            pts = ((int64_t)pkt.data[4] << 24) |
-                  ((int64_t)pkt.data[5] << 16) |
-                  ((int64_t)pkt.data[6] << 8)  |
-                  ((int64_t)pkt.data[7]);
-            int marker = pkt.data[1] & 0x80;
-            int payload_len = pkt.size - 12;
-            frame_buf = realloc(frame_buf, frame_size + payload_len);
-            memcpy(frame_buf + frame_size, pkt.data + 12, payload_len);
-            frame_size += payload_len;
-            if (marker) got_marker = 1;
-        }
-        free(pkt.data);
+        pts = ((int64_t)pkt_buf[4] << 24) |
+              ((int64_t)pkt_buf[5] << 16) |
+              ((int64_t)pkt_buf[6] << 8)  |
+              ((int64_t)pkt_buf[7]);
+        int marker      = pkt_buf[1] & 0x80;
+        int payload_len = (int)n - RTP_HEADER_SIZE;
+
+        ch->bytes_recv += (uint64_t)n;
+
+        frame_buf = realloc(frame_buf, frame_size + payload_len);
+        memcpy(frame_buf + frame_size, pkt_buf + RTP_HEADER_SIZE, payload_len);
+        frame_size += payload_len;
+
+        if (marker) got_marker = 1;
     }
 
-    out->data = frame_buf;
-    out->size = frame_size;
-    out->pts = pts;
+    out->data      = frame_buf;
+    out->size      = frame_size;
+    out->pts       = pts;
     out->key_frame = 0;
     ch->pkts_recv++;
     return 0;
@@ -431,38 +486,65 @@ static int rtp_recv(channel *ch, chan_frame *out)
 static void rtp_finish(channel *ch)
 {
     rtp_channel *r = (rtp_channel *)ch;
-    pthread_mutex_lock(&r->lock);
+    __sync_synchronize();
     r->finished = 1;
-    pthread_cond_broadcast(&r->not_empty);
-    pthread_mutex_unlock(&r->lock);
+    /* 发送一个零负载的 RTP 终止包 */
+    if (r->send_fd >= 0 && r->has_dst) {
+        uint8_t fin[12] = {0x80, 0x80 | 96, 0, 0, 0, 0, 0, 0,
+                           (r->ssrc>>24)&0xFF, (r->ssrc>>16)&0xFF,
+                           (r->ssrc>>8)&0xFF, (r->ssrc>>0)&0xFF};
+        udp_send_raw(r->send_fd, &r->dst_addr, fin, sizeof(fin));
+    }
 }
 
 static void rtp_destroy(channel *ch)
 {
     rtp_channel *r = (rtp_channel *)ch;
-    /* 清空剩余包 */
-    while (r->count > 0) {
-        free(r->ring[r->head].data);
-        r->head = (r->head + 1) % RTP_RING_CAP;
-        r->count--;
-    }
-    pthread_mutex_destroy(&r->lock);
-    pthread_cond_destroy(&r->not_empty);
-    pthread_cond_destroy(&r->not_full);
+    if (r->send_fd >= 0) close(r->send_fd);
+    if (r->recv_fd >= 0) close(r->recv_fd);
 }
 
-static channel *rtp_create(void)
+static channel *rtp_create(int is_sender, int is_receiver,
+                           const char *dst_ip, int dst_port, int bind_port)
 {
     rtp_channel *r = calloc(1, sizeof(*r));
-    r->base.type = CHAN_RTP;
-    r->base.name = "rtp (GB/T 28181 PS/RTP)";
-    r->base.send = rtp_send;
-    r->base.recv = rtp_recv;
-    r->base.finish = rtp_finish;
+    if (!r) return NULL;
+    r->base.type    = CHAN_RTP;
+    r->base.name    = "rtp (RTP over UDP, GB/T 28181)";
+    r->base.send    = rtp_send;
+    r->base.recv    = rtp_recv;
+    r->base.finish  = rtp_finish;
     r->base.destroy = rtp_destroy;
-    pthread_mutex_init(&r->lock, NULL);
-    pthread_cond_init(&r->not_empty, NULL);
-    pthread_cond_init(&r->not_full, NULL);
+    r->send_fd      = -1;
+    r->recv_fd      = -1;
+    r->ssrc         = 0x01020304;
+
+    if (is_sender) {
+        r->send_fd = udp_socket_create();
+        if (r->send_fd < 0) { free(r); return NULL; }
+        if (udp_set_dst(&r->dst_addr, dst_ip, dst_port) < 0) {
+            close(r->send_fd); free(r); return NULL;
+        }
+        r->has_dst = 1;
+        printf("[RTP] 发送端就绪 → %s:%d\n", dst_ip, dst_port);
+    }
+
+    if (is_receiver) {
+        r->recv_fd = udp_socket_create();
+        if (r->recv_fd < 0) {
+            if (r->send_fd >= 0) close(r->send_fd);
+            free(r); return NULL;
+        }
+        struct timeval tv = { .tv_sec = 1, .tv_usec = 0 };
+        setsockopt(r->recv_fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+        if (udp_socket_bind(r->recv_fd, bind_port) < 0) {
+            close(r->recv_fd);
+            if (r->send_fd >= 0) close(r->send_fd);
+            free(r); return NULL;
+        }
+        printf("[RTP] 接收端就绪 :%d\n", bind_port);
+    }
+
     return &r->base;
 }
 
@@ -471,11 +553,11 @@ static channel *rtp_create(void)
  * ════════════════════════════════════════════════════════════════════ */
 
 typedef struct {
-    const char   *input;
-    int           out_width, out_height, out_bitrate;
-    channel      *chan;
-    int           frames_sent;
-    double        elapsed;
+    const char *input;
+    int         out_width, out_height, out_bitrate;
+    channel    *chan;
+    int         frames_sent;
+    double      elapsed;
 } sender_ctx;
 
 static void *sender_thread(void *arg)
@@ -536,16 +618,16 @@ static void *sender_thread(void *arg)
             rkvc_packet pkt;
             while (rkvc_stream_pull(enc, &pkt, 0) == RKVC_OK) {
                 chan_frame cf = {
-                    .data = pkt.data,
-                    .size = pkt.size,
-                    .pts = pkt.pts,
+                    .data      = pkt.data,
+                    .size      = pkt.size,
+                    .pts       = pkt.pts,
                     .key_frame = pkt.key_frame,
                 };
                 ctx->chan->send(ctx->chan, &cf);
             }
             count++;
 
-            double target = t0 + count * frame_interval;
+            double target  = t0 + count * frame_interval;
             double sleep_s = target - now_sec();
             if (sleep_s > 0)
                 usleep((unsigned)(sleep_s * 1e6));
@@ -560,11 +642,9 @@ static void *sender_thread(void *arg)
     }
 
     ctx->frames_sent = count;
-    ctx->elapsed = now_sec() - t0;
+    ctx->elapsed     = now_sec() - t0;
 
-    rkvc_stream_stats stats;
-    rkvc_stream_get_stats(enc, &stats);
-    printf("[设备A] 发送完成: %d 帧, %lu RTP包, %.2f KB\n",
+    printf("[设备A] 发送完成: %d 帧, %lu 包, %.2f KB\n",
            count, (unsigned long)ctx->chan->pkts_sent,
            ctx->chan->bytes_sent / 1024.0);
 
@@ -579,9 +659,9 @@ static void *sender_thread(void *arg)
  * ════════════════════════════════════════════════════════════════════ */
 
 typedef struct {
-    channel      *chan;
-    int           frames_recv;
-    double        elapsed;
+    channel *chan;
+    int      frames_recv;
+    double   elapsed;
 } receiver_ctx;
 
 static void *receiver_thread(void *arg)
@@ -606,23 +686,19 @@ static void *receiver_thread(void *arg)
     for (;;) {
         chan_frame cf = {0};
         int rc = ctx->chan->recv(ctx->chan, &cf);
-        if (rc != 0)
-            break;
-
-        double recv_time = now_sec();
+        if (rc != 0) break;
 
         rkvc_packet pkt = {
-            .data = cf.data,
-            .size = cf.size,
-            .pts = cf.pts,
-            .dts = cf.pts,
+            .data      = cf.data,
+            .size      = cf.size,
+            .pts       = cf.pts,
+            .dts       = cf.pts,
             .key_frame = cf.key_frame,
         };
         err = rkvc_stream_push(dec, &pkt);
         if (cf.data) free((void *)cf.data);
 
-        if (err != RKVC_OK && err != RKVC_ERR_AGAIN)
-            break;
+        if (err != RKVC_OK && err != RKVC_ERR_AGAIN) break;
 
         rkvc_frame *f = NULL;
         while (rkvc_stream_pull(dec, &f, 0) == RKVC_OK) {
@@ -646,7 +722,7 @@ static void *receiver_thread(void *arg)
     }
 
     ctx->frames_recv = count;
-    ctx->elapsed = now_sec() - t0;
+    ctx->elapsed     = now_sec() - t0;
 
     rkvc_stream_stats stats;
     rkvc_stream_get_stats(dec, &stats);
@@ -664,84 +740,123 @@ static void *receiver_thread(void *arg)
 
 int main(int argc, char **argv)
 {
-    const char *input = NULL;
-    const char *chan_name = "ring";
+    const char *input     = NULL;
+    const char *chan_name = "udp";
+    const char *role      = "both";
+    const char *dst_ip    = "127.0.0.1";
+    int dst_port  = 9000;
+    int bind_port = 9000;
     int out_width = 1280, out_height = 720;
     int out_bitrate = 2000000;
     int c;
 
     static struct option long_opts[] = {
-        {"input",   required_argument, 0, 'i'},
-        {"channel", required_argument, 0, 'c'},
-        {"size",    required_argument, 0, 's'},
-        {"bitrate", required_argument, 0, 'b'},
-        {"help",    no_argument,       0, 'h'},
+        {"input",     required_argument, 0, 'i'},
+        {"channel",   required_argument, 0, 'c'},
+        {"role",      required_argument, 0, 'r'},
+        {"dst-ip",    required_argument, 0, 'D'},
+        {"dst-port",  required_argument, 0, 'P'},
+        {"bind-port", required_argument, 0, 'B'},
+        {"size",      required_argument, 0, 's'},
+        {"bitrate",   required_argument, 0, 'b'},
+        {"help",      no_argument,       0, 'h'},
         {0, 0, 0, 0}
     };
 
-    while ((c = getopt_long(argc, argv, "i:c:s:b:h", long_opts, NULL)) != -1) {
+    while ((c = getopt_long(argc, argv, "i:c:r:D:P:B:s:b:h", long_opts, NULL)) != -1) {
         switch (c) {
-        case 'i': input = optarg; break;
-        case 'c': chan_name = optarg; break;
+        case 'i': input      = optarg; break;
+        case 'c': chan_name  = optarg; break;
+        case 'r': role       = optarg; break;
+        case 'D': dst_ip     = optarg; break;
+        case 'P': dst_port   = atoi(optarg); break;
+        case 'B': bind_port  = atoi(optarg); break;
         case 's': sscanf(optarg, "%dx%d", &out_width, &out_height); break;
         case 'b': out_bitrate = atoi(optarg); break;
         case 'h':
-            printf("stream_device_pair — 双设备流式传输模拟\n\n"
-                   "  -i FILE       输入文件\n"
-                   "  -c MODE       通道模式:\n"
-                   "                  ring — 环形缓冲区 (默认, 模拟 UDP 局域网)\n"
-                   "                  shm  — 共享内存 (RTOS 零拷贝消息队列)\n"
-                   "                  rtp  — RTP/PS 封包 (GB/T 28181 国标)\n"
+            printf("stream_device_pair — 双设备流式传输\n\n"
+                   "用法:\n"
+                   "  # 本机测试\n"
+                   "  stream_device_pair -i input.h265 -c udp|rtp -r both --dst-ip 127.0.0.1\n\n"
+                   "  # 双设备部署 (物理两台 RK3588)\n"
+                   "  # 设备 A (发送端):\n"
+                   "  stream_device_pair -i input.h265 -c udp|rtp -r send --dst-ip <接收端IP> --dst-port 9000\n"
+                   "  # 设备 B (接收端):\n"
+                   "  stream_device_pair -c udp|rtp -r recv --bind-port 9000\n\n"
+                   "选项:\n"
+                   "  -i FILE       输入文件 (接收端不需要)\n"
+                   "  -c MODE       通道: udp (原始帧) / rtp (RTP 封包, GB/T 28181)\n"
+                   "  -r ROLE       角色: send / recv / both (默认 both)\n"
+                   "  --dst-ip IP   目标 IP (默认 127.0.0.1)\n"
+                   "  --dst-port N  目标端口 (默认 9000)\n"
+                   "  --bind-port N 绑定端口 (默认 9000)\n"
                    "  -s WxH        传输分辨率 (默认 1280x720)\n"
                    "  -b BPS        传输码率 (默认 2M)\n");
             return 0;
         }
     }
 
-    if (!input) {
-        fprintf(stderr, "需要指定输入文件: -i <file>\n");
+    int is_sender   = (strcmp(role, "send") == 0 || strcmp(role, "both") == 0);
+    int is_receiver = (strcmp(role, "recv") == 0 || strcmp(role, "both") == 0);
+
+    if (!is_sender && !is_receiver) {
+        fprintf(stderr, "无效的角色: %s (支持 send/recv/both)\n", role);
+        return 1;
+    }
+    if (is_sender && !input) {
+        fprintf(stderr, "发送端需要指定输入文件: -i <file>\n");
         return 1;
     }
 
-    /* 创建通道 */
     channel *ch = NULL;
-    if (strcmp(chan_name, "ring") == 0)
-        ch = ring_create();
-    else if (strcmp(chan_name, "shm") == 0)
-        ch = shm_create();
+    if (strcmp(chan_name, "udp") == 0)
+        ch = udp_create(is_sender, is_receiver, dst_ip, dst_port, bind_port);
     else if (strcmp(chan_name, "rtp") == 0)
-        ch = rtp_create();
+        ch = rtp_create(is_sender, is_receiver, dst_ip, dst_port, bind_port);
     else {
-        fprintf(stderr, "未知通道模式: %s (支持 ring/shm/rtp)\n", chan_name);
+        fprintf(stderr, "未知通道: %s (支持 udp/rtp)\n", chan_name);
         return 1;
     }
+    if (!ch) return 1;
 
     rkvc_init();
 
     printf("══════════════════════════════════════════\n");
-    printf("  双设备流式传输模拟\n");
-    printf("  输入:   %s\n", input);
-    printf("  传输:   %dx%d @ %d kbps\n",
-           out_width, out_height, out_bitrate / 1000);
-    printf("  通道:   %s\n", ch->name);
+    printf("  双设备流式传输 (真实网络)\n");
+    printf("  角色:    %s\n", role);
+    printf("  通道:    %s\n", ch->name);
+    if (is_sender) {
+        printf("  输入:    %s\n", input);
+        printf("  传输:    %dx%d @ %d kbps\n",
+               out_width, out_height, out_bitrate / 1000);
+        printf("  目标:    %s:%d\n", dst_ip, dst_port);
+    }
+    if (is_receiver)
+        printf("  监听:    :%d\n", bind_port);
     printf("══════════════════════════════════════════\n\n");
 
     double t_start = now_sec();
 
     sender_ctx sctx = {
-        .input = input,
-        .out_width = out_width, .out_height = out_height,
+        .input       = input,
+        .out_width   = out_width,
+        .out_height  = out_height,
         .out_bitrate = out_bitrate,
-        .chan = ch,
+        .chan        = ch,
     };
     receiver_ctx rctx = { .chan = ch };
 
-    pthread_t sender_tid, receiver_tid;
-    pthread_create(&sender_tid, NULL, sender_thread, &sctx);
-    pthread_create(&receiver_tid, NULL, receiver_thread, &rctx);
+    pthread_t sender_tid = 0, receiver_tid = 0;
 
-    pthread_join(sender_tid, NULL);
-    pthread_join(receiver_tid, NULL);
+    if (is_sender)
+        pthread_create(&sender_tid, NULL, sender_thread, &sctx);
+    if (is_receiver)
+        pthread_create(&receiver_tid, NULL, receiver_thread, &rctx);
+
+    if (sender_tid)
+        pthread_join(sender_tid, NULL);
+    if (receiver_tid)
+        pthread_join(receiver_tid, NULL);
 
     double t_total = now_sec() - t_start;
 
@@ -749,12 +864,14 @@ int main(int argc, char **argv)
     printf("  端到端统计\n");
     printf("──────────────────────────────────────────\n");
     printf("  通道模式: %s\n", ch->name);
-    printf("  发送端:   %d 帧, %.3fs, %.1f fps\n",
-           sctx.frames_sent, sctx.elapsed,
-           sctx.elapsed > 0 ? sctx.frames_sent / sctx.elapsed : 0);
-    printf("  接收端:   %d 帧, %.3fs, %.1f fps\n",
-           rctx.frames_recv, rctx.elapsed,
-           rctx.elapsed > 0 ? rctx.frames_recv / rctx.elapsed : 0);
+    if (is_sender)
+        printf("  发送端:   %d 帧, %.3fs, %.1f fps\n",
+               sctx.frames_sent, sctx.elapsed,
+               sctx.elapsed > 0 ? sctx.frames_sent / sctx.elapsed : 0);
+    if (is_receiver)
+        printf("  接收端:   %d 帧, %.3fs, %.1f fps\n",
+               rctx.frames_recv, rctx.elapsed,
+               rctx.elapsed > 0 ? rctx.frames_recv / rctx.elapsed : 0);
     printf("  总耗时:   %.3fs\n", t_total);
     printf("  通道包数: %lu 发 / %lu 收\n",
            (unsigned long)ch->pkts_sent, (unsigned long)ch->pkts_recv);
@@ -763,12 +880,11 @@ int main(int argc, char **argv)
     if (ch->type == CHAN_RTP) {
         double overhead = ch->bytes_sent > 0 ?
             (double)(ch->bytes_sent - ch->bytes_recv) / ch->bytes_sent * 100 : 0;
-        printf("  RTP 开销: %.1f%% (RTP 头 + 分片)\n", overhead);
+        printf("  RTP 开销: %.1f%% (RTP 头 + 分片 + UDP/IP 头)\n", overhead);
     }
-    if (ch->type == CHAN_SHM)
-        printf("  SHM 池:   %d MB (零拷贝)\n", SHM_POOL_SIZE / (1024 * 1024));
     printf("  帧完整:   %s\n",
-           sctx.frames_sent == rctx.frames_recv ? "是" : "否");
+           (is_sender && is_receiver && sctx.frames_sent == rctx.frames_recv)
+           ? "是" : (is_sender && is_receiver) ? "否" : "N/A (单角色)");
     printf("══════════════════════════════════════════\n");
 
     ch->destroy(ch);

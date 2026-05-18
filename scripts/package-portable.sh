@@ -129,10 +129,24 @@ package() {
     echo "=== 打包 $PKG_NAME ==="
 
     rm -rf "$OUT_DIR/$PKG_NAME"
-    mkdir -p "$OUT_DIR/$PKG_NAME"/{bin,lib,include/rkvc,share/pkgconfig}
+    mkdir -p "$OUT_DIR/$PKG_NAME"/{bin,lib,include/rkvc,share/pkgconfig,examples/bin,examples/src}
 
     for tool in rkvc_encode rkvc_decode rkvc_info rkvc_bench; do
         [[ -f "$RKVC_BUILD/$tool" ]] && cp "$RKVC_BUILD/$tool" "$OUT_DIR/$PKG_NAME/bin/"
+    done
+
+    echo "--- 复制示例程序二进制 ---"
+    for exe in "$RKVC_BUILD"/example_*; do
+        [[ -f "$exe" ]] || continue
+        cp "$exe" "$OUT_DIR/$PKG_NAME/examples/bin/"
+        echo "  $(basename "$exe")"
+    done
+
+    echo "--- 复制示例程序源码 ---"
+    for src in "$PROJECT_DIR/examples/"*; do
+        [[ -f "$src" ]] || continue
+        cp "$src" "$OUT_DIR/$PKG_NAME/examples/src/"
+        echo "  $(basename "$src")"
     done
 
     # librkvc 版本号随项目变化，用通配符匹配
@@ -140,16 +154,8 @@ package() {
     rkvc_real="$(ls -1 "$RKVC_BUILD"/librkvc.so.*.*.* 2>/dev/null | sort -V | tail -1)"
     if [[ -f "$rkvc_real" ]]; then
         cp -a "$rkvc_real" "$OUT_DIR/$PKG_NAME/lib/"
-        local rkvc_base rkvc_short
-        rkvc_base="$(basename "$rkvc_real" | sed 's/\.[0-9]*\.[0-9]*\.[0-9]*$//')"  # librkvc.so.0
-        rkvc_short="$(basename "$rkvc_real" | sed 's/\.so\..*/.so/')"                # librkvc.so
-        ln -sf "$(basename "$rkvc_real")" "$OUT_DIR/$PKG_NAME/lib/$rkvc_base"
-        ln -sf "$(basename "$rkvc_real")" "$OUT_DIR/$PKG_NAME/lib/$rkvc_short"
     fi
-
-    for so in librkvc.so.0 librkvc.so; do
-        [[ -f "$RKVC_BUILD/$so" ]] && cp -a "$RKVC_BUILD/$so" "$OUT_DIR/$PKG_NAME/lib/" 2>/dev/null || true
-    done
+    # 符号链接由下方统一循环创建
 
     echo "--- 复制 ffmpeg 动态库 (仅限 rkvc 依赖) ---"
     # rkvc 只依赖 libavcodec / libavformat / libavutil
@@ -167,18 +173,13 @@ package() {
     for real in lib*.so.*; do
         [[ -f "$real" ]] || continue
         [[ -L "$real" ]] && continue
-        # libfoo.so → dev 符号链接
-        short="$(echo "$real" | sed 's/\.so\..*/.so/')"
-        ln -sf "$real" "$short" 2>/dev/null || true
-        # 创建所有中间层级符号链接: libfoo.so.1.2.3 → libfoo.so.1.2 → libfoo.so.1
-        ver_part="${real#*.so.}"
-        prefix="${real%%.so.*}.so"
-        IFS='.' read -ra parts <<< "$ver_part"
-        for (( i=1; i<${#parts[@]}; i++ )); do
-            intermediate="$prefix.${parts[*]:0:$i}"
-            intermediate="${intermediate// /.}"
-            ln -sf "$real" "$intermediate" 2>/dev/null || true
-        done
+        # 标准化两级链接 (符合 Linux ld.so 惯例):
+        #   libfoo.so → libfoo.so.X           (dev 链接)
+        #   libfoo.so.X → libfoo.so.X.Y.Z     (SONAME 链接, ld.so 运行时使用)
+        soname="${real%.*.*}"                # libfoo.so.X
+        dev="${real%%.so.*}.so"              # libfoo.so
+        ln -sf "$real"   "$soname" 2>/dev/null || true
+        ln -sf "$soname" "$dev"    2>/dev/null || true
     done
     cd "$PROJECT_DIR"
 
@@ -186,6 +187,11 @@ package() {
     for tool in "$OUT_DIR/$PKG_NAME/bin/"*; do
         patchelf --set-rpath '$ORIGIN/../lib' "$tool" && \
             echo "  $(basename "$tool")"
+    done
+    for exe in "$OUT_DIR/$PKG_NAME/examples/bin/"*; do
+        [[ -f "$exe" ]] || continue
+        patchelf --set-rpath '$ORIGIN/../../lib' "$exe" && \
+            echo "  examples/bin/$(basename "$exe")"
     done
     # librkvc 依赖 ffmpeg 库，也需要 $ORIGIN RPATH
     local rkvc_so
