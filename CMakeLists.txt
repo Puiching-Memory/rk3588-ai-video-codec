@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 project(rkvc
-    VERSION 0.1.2
+    VERSION 0.1.3
     DESCRIPTION "RK3588 H.265 Video Codec Library (RKMPP)"
     LANGUAGES C
 )
