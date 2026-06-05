@@ -12,7 +12,7 @@ rkvc_info
 
 输出示例：
 ```
-rkvc version: 0.1.3
+rkvc version: 0.1.4
 Hardware encoder: available
 Hardware decoder: available
 Hardware scaler: available
@@ -96,19 +96,19 @@ rkvc_bench
 
 **编码文件**：
 ```bash
-./examples/bin/example_encode_file input.yuv output.h265 1920 1080
+./examples/bin/example_encode_file -o output.h265 -s 1920x1080 -n 300
 ```
 
 **解码文件**：
 ```bash
-./examples/bin/example_decode_file input.h265 output.nv12
+./examples/bin/example_decode_file input.h265 -o output.nv12
 ```
 
 ### 流式处理
 
 **流式编码**：
 ```bash
-./examples/bin/example_stream_encode output.h265 1920 1080 300
+./examples/bin/example_stream_encode -s 1920x1080 -n 300
 ```
 
 **流式解码**：
@@ -120,7 +120,7 @@ rkvc_bench
 
 **基本转码**：
 ```bash
-./examples/bin/example_transcode input.h265 output.h265
+./examples/bin/example_transcode -i input.h265 -o output.h265
 ```
 
 **降分辨率转码**：
@@ -155,7 +155,7 @@ rkvc_bench
 测试端到端编解码延迟：
 
 ```bash
-# 低延迟模式，1080p@30fps
+# 启用低延迟解码模式，1080p@30fps
 ./examples/bin/example_latency_test -l
 
 # 自定义分辨率和帧率
@@ -190,7 +190,7 @@ rkvc_bench
 
 ### 性能优化
 
-- 使用低延迟模式（`-l` 参数）可减少编码延迟
+- 延迟测试工具的 `-l` 参数会启用低延迟解码模式
 - 适当调整码率（`-b` 参数）平衡质量和性能
 - 对于实时应用，建议使用流式 API 而非文件 API
 

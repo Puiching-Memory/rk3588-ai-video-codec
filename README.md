@@ -109,7 +109,8 @@ rkvc_encoder_close(enc);
 
 // 解码
 rkvc_decoder *dec = NULL;
-rkvc_decoder_open_file(&dec, &rkvc_decoder_config_defaults(), "output.h265");
+rkvc_decoder_config dcfg = rkvc_decoder_config_defaults();
+rkvc_decoder_open_file(&dec, &dcfg, "output.h265");
 rkvc_frame *frame = NULL;
 while (rkvc_decoder_read_packet(dec) == RKVC_OK)
     while (rkvc_decoder_receive_frame(dec, &frame) == RKVC_OK)

@@ -70,7 +70,8 @@ rkvc_encoder_close(enc);
 
 ```c
 rkvc_decoder *dec = NULL;
-rkvc_decoder_open_file(&dec, &rkvc_decoder_config_defaults(), "input.h265");
+rkvc_decoder_config cfg = rkvc_decoder_config_defaults();
+rkvc_decoder_open_file(&dec, &cfg, "input.h265");
 
 rkvc_frame *frame = NULL;
 while (rkvc_decoder_read_packet(dec) == RKVC_OK)

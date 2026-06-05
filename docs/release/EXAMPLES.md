@@ -17,20 +17,20 @@
 
 ### encode_file - 文件编码
 
-将原始 YUV/NV12 视频文件编码为压缩格式。
+生成测试 NV12 帧并编码为 H.265 文件。
 
 **用法**：
 ```bash
-./examples/bin/example_encode_file <input.yuv> <output.h265> <width> <height>
+./examples/bin/example_encode_file -o <output.h265> [-s WxH] [-r fps] [-n count] [-b bitrate]
 ```
 
 **示例**：
 ```bash
-# 编码 1080p YUV 文件
-./examples/bin/example_encode_file input_1920x1080.yuv output.h265 1920 1080
+# 编码 300 帧 1080p 测试图案
+./examples/bin/example_encode_file -o output.h265 -s 1920x1080 -n 300
 
-# 编码 4K YUV 文件
-./examples/bin/example_encode_file input_3840x2160.yuv output.h265 3840 2160
+# 编码 100 帧 4K 测试图案
+./examples/bin/example_encode_file -o output_4k.h265 -s 3840x2160 -n 100 -b 20000000
 ```
 
 **应用场景**：
@@ -38,7 +38,7 @@
 - 批量视频处理
 - 视频格式转换
 
-**源码位置**：`examples/src/encode_file.c`
+**源码位置**：`examples/encode_file.c`
 
 ---
 
@@ -48,16 +48,16 @@
 
 **用法**：
 ```bash
-./examples/bin/example_decode_file <input.h265> <output.nv12>
+./examples/bin/example_decode_file <input.h265> [-o output.nv12]
 ```
 
 **示例**：
 ```bash
 # 解码视频文件
-./examples/bin/example_decode_file video.h265 decoded.nv12
+./examples/bin/example_decode_file video.h265 -o decoded.nv12
 
 # 解码后用 ffplay 播放
-./examples/bin/example_decode_file video.h265 decoded.nv12
+./examples/bin/example_decode_file video.h265 -o decoded.nv12
 ffplay -f rawvideo -pixel_format nv12 -video_size 1920x1080 decoded.nv12
 ```
 
@@ -66,7 +66,7 @@ ffplay -f rawvideo -pixel_format nv12 -video_size 1920x1080 decoded.nv12
 - 帧提取
 - 视频分析
 
-**源码位置**：`examples/src/decode_file.c`
+**源码位置**：`examples/decode_file.c`
 
 ---
 
@@ -74,20 +74,20 @@ ffplay -f rawvideo -pixel_format nv12 -video_size 1920x1080 decoded.nv12
 
 ### stream_encode - 流式编码
 
-演示流式编码 API，逐帧推送数据到编码器。
+演示流式编码 API，逐帧推送测试帧并从内存中拉取编码包。
 
 **用法**：
 ```bash
-./examples/bin/example_stream_encode <output.h265> <width> <height> <frame_count>
+./examples/bin/example_stream_encode [-s WxH] [-r fps] [-n count] [-b bitrate]
 ```
 
 **示例**：
 ```bash
 # 编码 300 帧 1080p 测试图案
-./examples/bin/example_stream_encode output.h265 1920 1080 300
+./examples/bin/example_stream_encode -s 1920x1080 -n 300
 
 # 编码 100 帧 720p
-./examples/bin/example_stream_encode output.h265 1280 720 100
+./examples/bin/example_stream_encode -s 1280x720 -n 100
 ```
 
 **应用场景**：
@@ -96,11 +96,12 @@ ffplay -f rawvideo -pixel_format nv12 -video_size 1920x1080 decoded.nv12
 - 屏幕录制
 
 **关键 API**：
-- `rkvc_stream_create()` - 创建编码流
+- `rkvc_stream_open()` - 创建编码流
 - `rkvc_stream_push()` - 推送原始帧
-- `rkvc_stream_pull()` - 拉取编码帧
+- `rkvc_stream_pull()` - 拉取编码包
+- `rkvc_stream_close()` - 关闭编码流
 
-**源码位置**：`examples/src/stream_encode.c`
+**源码位置**：`examples/stream_encode.c`
 
 ---
 
@@ -125,11 +126,12 @@ ffplay -f rawvideo -pixel_format nv12 -video_size 1920x1080 decoded.nv12
 - 帧级处理
 
 **关键 API**：
-- `rkvc_stream_create()` - 创建解码流
+- `rkvc_stream_open()` - 创建解码流
 - `rkvc_stream_push()` - 推送编码数据
 - `rkvc_stream_pull()` - 拉取解码帧
+- `rkvc_stream_close()` - 关闭解码流
 
-**源码位置**：`examples/src/stream_decode.c`
+**源码位置**：`examples/stream_decode.c`
 
 ---
 
@@ -141,13 +143,13 @@ ffplay -f rawvideo -pixel_format nv12 -video_size 1920x1080 decoded.nv12
 
 **用法**：
 ```bash
-./examples/bin/example_transcode <input.h265> <output.h265>
+./examples/bin/example_transcode -i <input.h265> -o <output.h265> [-s WxH] [-b bitrate]
 ```
 
 **示例**：
 ```bash
 # 基本转码（保持分辨率）
-./examples/bin/example_transcode input.h265 output.h265
+./examples/bin/example_transcode -i input.h265 -o output.h265
 ```
 
 **应用场景**：
@@ -155,7 +157,7 @@ ffplay -f rawvideo -pixel_format nv12 -video_size 1920x1080 decoded.nv12
 - 视频重编码
 - 格式标准化
 
-**源码位置**：`examples/src/transcode.c`
+**源码位置**：`examples/transcode.c`
 
 ---
 
@@ -189,7 +191,7 @@ ffplay -f rawvideo -pixel_format nv12 -video_size 1920x1080 decoded.nv12
 - 自动硬件缩放
 - 零拷贝帧传递
 
-**源码位置**：`examples/src/stream_transcode.c`
+**源码位置**：`examples/stream_transcode.c`
 
 ---
 
@@ -278,7 +280,7 @@ ffplay -f rawvideo -pixel_format nv12 -video_size 1920x1080 decoded.nv12
 | 兼容性   | 专用协议         | 标准协议     |
 | 适用场景 | 专用系统         | 标准流媒体   |
 
-**源码位置**：`examples/src/stream_device_pair.c`
+**源码位置**：`examples/stream_device_pair.c`
 
 ---
 
@@ -329,7 +331,7 @@ Average: 12.15 ms
 - 系统调优
 - 延迟敏感应用验证
 
-**源码位置**：`examples/src/latency_test.c`
+**源码位置**：`examples/latency_test.c`
 
 ---
 
@@ -341,11 +343,12 @@ Average: 12.15 ms
 
 **用法**：
 ```bash
-./examples/bin/example_psnr_test -i <input.h265> [-v] [-n count]
+./examples/bin/example_psnr_test -i <input.h265> [-b bitrate] [-v] [-n count]
 ```
 
 **参数说明**：
 - `-i` — 输入视频文件
+- `-b` — 重编码码率（默认 4Mbps）
 - `-v` — 详细模式（输出逐帧 PSNR）
 - `-n` — 测试帧数（默认全部）
 
@@ -382,25 +385,25 @@ Minimum Frame: 39.82 dB (frame 87)
 - 码率优化
 - 质量基准测试
 
-**源码位置**：`examples/src/psnr_test.c`
+**源码位置**：`examples/psnr_test.c`
 
 ---
 
 ## 编译示例程序
 
-所有示例程序源码位于 `examples/src/`，可以作为二次开发的参考。
+所有示例程序源码位于 `examples/`，可以作为二次开发的参考。
 
 **编译单个示例**：
 ```bash
 export PKG_CONFIG_PATH=$PWD/share/pkgconfig:$PKG_CONFIG_PATH
 export LD_LIBRARY_PATH=$PWD/lib:$LD_LIBRARY_PATH
 
-gcc -o my_encoder examples/src/encode_file.c $(pkg-config --cflags --libs rkvc)
+gcc -o my_encoder examples/encode_file.c $(pkg-config --cflags --libs rkvc)
 ```
 
 **运行自编译程序**：
 ```bash
-./my_encoder input.yuv output.h265 1920 1080
+./my_encoder -o output.h265 -s 1920x1080 -n 300
 ```
 
 详见 [二次开发指南](DEVELOPMENT.md)。

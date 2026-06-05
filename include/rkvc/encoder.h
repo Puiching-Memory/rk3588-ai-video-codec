@@ -82,7 +82,8 @@ rkvc_err rkvc_encoder_open_file(rkvc_encoder **out,
 /**
  * @brief 送入一帧原始数据。
  *
- * @param f  帧句柄 (NV12 或配置指定格式)。调用后引用被编码器接管。
+ * @param f  帧句柄 (NV12 或配置指定格式)。编码器会在需要时引用输入帧；
+ *           调用方仍需释放自己的 rkvc_frame 引用。
  *
  * 送入 NULL 表示 flush (等价于后面调用 rkvc_encoder_drain)。
  */

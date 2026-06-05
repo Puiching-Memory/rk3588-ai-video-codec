@@ -114,14 +114,27 @@ typedef struct rkvc_decoder rkvc_decoder;
 // 流式处理句柄
 typedef struct rkvc_stream rkvc_stream;
 
-// 视频帧
+// 视频帧是不透明句柄，通过 rkvc_frame_* API 访问
+typedef struct rkvc_frame rkvc_frame;
+
+// 帧元数据
 typedef struct {
-    uint8_t *data[3];      // Y, U, V 平面数据指针
-    int linesize[3];       // 每个平面的行字节数
-    int width, height;     // 分辨率
-    rkvc_pixel_format fmt; // 像素格式
-    int64_t pts;           // 时间戳（微秒）
-} rkvc_frame;
+    int          width;
+    int          height;
+    rkvc_pix_fmt format;
+    int64_t      pts;
+    int          key_frame;
+} rkvc_frame_info;
+
+// 编码后的压缩包
+typedef struct {
+    const uint8_t *data;
+    int            size;
+    int64_t        pts;
+    int64_t        dts;
+    int            key_frame;
+    int64_t        pos;
+} rkvc_packet;
 
 // 错误码
 typedef enum {
@@ -164,6 +177,26 @@ const char *rkvc_err_str(rkvc_err err);
 ```c
 #include <rkvc/rkvc.h>
 #include <stdio.h>
+#include <string.h>
+
+static void fill_nv12_frame(rkvc_frame *frame, int width, int height, int idx)
+{
+    uint8_t *planes[4] = {0};
+    int strides[4] = {0};
+    rkvc_frame_get_data(frame, planes, strides);
+
+    // 填充 Y 平面
+    for (int y = 0; y < height; y++) {
+        memset(planes[0] + y * strides[0], (uint8_t)((y + idx) & 0xff), width);
+    }
+
+    // 填充 UV 平面（NV12）
+    for (int y = 0; y < height / 2; y++) {
+        memset(planes[1] + y * strides[1], 128, width);
+    }
+
+    rkvc_frame_set_pts(frame, idx);
+}
 
 int main(void) {
     rkvc_err err;
@@ -176,52 +209,68 @@ int main(void) {
     }
     
     // 2. 配置编码器
-    rkvc_encoder_config cfg = {
-        .width = 1920,
-        .height = 1080,
-        .fps = 30,
-        .bitrate = 4000000,  // 4 Mbps
-        .gop_size = 30,
-        .input_format = RKVC_PIX_FMT_NV12
-    };
+    rkvc_encoder_config cfg = rkvc_encoder_config_defaults();
+    cfg.width = 1920;
+    cfg.height = 1080;
+    cfg.fps_num = 30;
+    cfg.fps_den = 1;
+    cfg.bitrate = 4000000;  // 4 Mbps
+    cfg.gop_size = 30;
+    cfg.input_format = RKVC_PIX_FMT_NV12;
     
-    // 3. 创建编码器
+    // 3. 打开编码器并直接输出到文件
     rkvc_encoder *enc = NULL;
-    err = rkvc_encoder_create(&enc, &cfg, "output.h265");
+    err = rkvc_encoder_open_file(&enc, &cfg, "output.h265");
     if (err != RKVC_OK) {
-        fprintf(stderr, "Create encoder failed: %s\n", rkvc_err_str(err));
+        fprintf(stderr, "Open encoder failed: %s\n", rkvc_err_str(err));
         return 1;
     }
     
     // 4. 编码循环
     for (int i = 0; i < 300; i++) {
         // 准备输入帧
-        rkvc_frame frame;
+        rkvc_frame *frame = NULL;
         err = rkvc_frame_alloc(&frame, 1920, 1080, RKVC_PIX_FMT_NV12);
         if (err != RKVC_OK) break;
         
         // 填充帧数据（从摄像头、文件等）
-        // ... fill frame.data[0], frame.data[1] ...
-        frame.pts = i * 1000000 / 30;  // 微秒
+        fill_nv12_frame(frame, 1920, 1080, i);
         
         // 编码
-        err = rkvc_encoder_encode(enc, &frame);
-        rkvc_frame_free(&frame);
+        err = rkvc_encoder_send_frame(enc, frame);
+        rkvc_frame_unref(frame);
         
         if (err != RKVC_OK && err != RKVC_ERR_AGAIN) {
             fprintf(stderr, "Encode failed: %s\n", rkvc_err_str(err));
             break;
         }
+
+        // 文件模式下 receive_packet 会自动写入 output.h265
+        rkvc_packet pkt;
+        while (rkvc_encoder_receive_packet(enc, &pkt) == RKVC_OK) {
+        }
     }
     
-    // 5. 刷新编码器（输出缓冲帧）
-    rkvc_encoder_flush(enc);
+    // 5. 关闭编码器会自动 drain 并写入文件 trailer
+    rkvc_encoder_close(enc);
     
     // 6. 清理
-    rkvc_encoder_destroy(enc);
     rkvc_deinit();
     
     return 0;
+}
+```
+
+如果不想直接写文件，而是要在内存中获取 H.265 结果，请使用无文件模式：
+
+```c
+rkvc_encoder_open(&enc, &cfg);
+rkvc_encoder_send_frame(enc, frame);
+
+rkvc_packet pkt;
+while (rkvc_encoder_receive_packet(enc, &pkt) == RKVC_OK) {
+    // pkt.data / pkt.size 是编码后的压缩数据
+    // 如需长期保存，请在下一次 send/receive/close 前 memcpy 出来
 }
 ```
 
@@ -229,20 +278,27 @@ int main(void) {
 
 ```c
 typedef struct {
-    int width;                    // 宽度（必需）
-    int height;                   // 高度（必需）
-    int fps;                      // 帧率（默认 30）
-    int bitrate;                  // 码率 bps（默认 4000000）
-    int gop_size;                 // GOP 大小（默认 30）
-    rkvc_pixel_format input_format; // 输入格式（默认 NV12）
-    int low_latency;              // 低延迟模式（0/1，默认 0）
+    int            width;        // 宽度（必需）
+    int            height;       // 高度（必需）
+    int            fps_num;      // 帧率分子（默认 30）
+    int            fps_den;      // 帧率分母（默认 1）
+    int64_t        bitrate;      // 码率 bps（默认 4000000）
+    int            gop_size;     // GOP 大小（默认 60）
+    rkvc_pix_fmt   input_format; // 输入格式（默认 NV12）
+    rkvc_preset    preset;       // 编码预设（默认 MEDIUM）
+    rkvc_rc_mode   rc_mode;      // 码率控制（默认 CBR）
+    int            qp;           // CQP 模式下的 QP 值
+    int            profile;      // HEVC profile（0=自动）
+    int            level;        // HEVC level（0=自动）
+    int            num_b_frames; // B 帧数量（默认 0）
+    int            threads;      // 线程数（0=自动）
 } rkvc_encoder_config;
 ```
 
 **参数建议**：
 - `bitrate`：1080p 建议 4-8 Mbps，4K 建议 15-25 Mbps
 - `gop_size`：通常设为帧率值（如 30fps → gop=30）
-- `low_latency`：实时应用设为 1，离线处理设为 0
+- 实时低延迟场景建议 `num_b_frames = 0`，并用较小的 `gop_size`
 
 ---
 
@@ -261,46 +317,46 @@ int main(void) {
     err = rkvc_init();
     if (err != RKVC_OK) return 1;
     
-    // 2. 创建解码器
+    // 2. 打开文件解码器
     rkvc_decoder *dec = NULL;
-    err = rkvc_decoder_create(&dec, "input.h265");
+    rkvc_decoder_config cfg = rkvc_decoder_config_defaults();
+    err = rkvc_decoder_open_file(&dec, &cfg, "input.h265");
     if (err != RKVC_OK) {
-        fprintf(stderr, "Create decoder failed: %s\n", rkvc_err_str(err));
+        fprintf(stderr, "Open decoder failed: %s\n", rkvc_err_str(err));
         return 1;
     }
     
     // 3. 解码循环
-    rkvc_frame frame;
     while (1) {
-        err = rkvc_decoder_decode(dec, &frame);
-        
-        if (err == RKVC_ERR_EOF) {
+        err = rkvc_decoder_read_packet(dec);
+        if (err == RKVC_ERR_EOF)
             break;  // 文件结束
-        }
-        
-        if (err == RKVC_ERR_AGAIN) {
-            continue;  // 需要更多输入
-        }
-        
         if (err != RKVC_OK) {
-            fprintf(stderr, "Decode failed: %s\n", rkvc_err_str(err));
+            fprintf(stderr, "Read packet failed: %s\n", rkvc_err_str(err));
             break;
         }
-        
-        // 处理解码帧
-        printf("Decoded frame: %dx%d, pts=%ld\n", 
-               frame.width, frame.height, frame.pts);
-        
-        // 使用帧数据...
-        // frame.data[0] - Y 平面
-        // frame.data[1] - UV 平面（NV12）
-        
-        // 释放帧
-        rkvc_frame_free(&frame);
+
+        rkvc_frame *frame = NULL;
+        while (rkvc_decoder_receive_frame(dec, &frame) == RKVC_OK) {
+            rkvc_frame_info info;
+            rkvc_frame_get_info(frame, &info);
+
+            printf("Decoded frame: %dx%d, pts=%ld\n",
+                   info.width, info.height, (long)info.pts);
+
+            // 使用帧数据
+            uint8_t *planes[4] = {0};
+            int strides[4] = {0};
+            rkvc_frame_get_data(frame, planes, strides);
+            // planes[0] - Y 平面
+            // planes[1] - UV 平面（NV12）
+
+            rkvc_frame_unref(frame);
+        }
     }
     
     // 4. 清理
-    rkvc_decoder_destroy(dec);
+    rkvc_decoder_close(dec);
     rkvc_deinit();
     
     return 0;
@@ -317,51 +373,60 @@ int main(void) {
 
 ```c
 #include <rkvc/rkvc.h>
+#include <string.h>
 
 int stream_encode_example(void) {
     rkvc_init();
     
     // 1. 创建编码流
-    rkvc_stream_config cfg = {
-        .mode = RKVC_STREAM_ENCODE,
-        .width = 1920,
-        .height = 1080,
-        .fps = 30,
-        .bitrate = 4000000,
-        .input_format = RKVC_PIX_FMT_NV12,
-        .buffer_size = 10  // 内部缓冲区大小
-    };
+    rkvc_stream_config cfg = rkvc_stream_config_defaults();
+    cfg.direction = RKVC_STREAM_ENCODE;
+    cfg.width = 1920;
+    cfg.height = 1080;
+    cfg.fps_num = 30;
+    cfg.fps_den = 1;
+    cfg.bitrate = 4000000;
+    cfg.input_format = RKVC_PIX_FMT_NV12;
+    cfg.buffer_size = 10;  // 内部缓冲区大小
     
     rkvc_stream *stream = NULL;
-    rkvc_stream_create(&stream, &cfg);
+    rkvc_stream_open(&stream, &cfg);
     
     // 2. 推送原始帧
     for (int i = 0; i < 300; i++) {
-        rkvc_frame in_frame;
+        rkvc_frame *in_frame = NULL;
         rkvc_frame_alloc(&in_frame, 1920, 1080, RKVC_PIX_FMT_NV12);
         
         // 填充帧数据...
-        in_frame.pts = i * 1000000 / 30;
+        uint8_t *planes[4] = {0};
+        int strides[4] = {0};
+        rkvc_frame_get_data(in_frame, planes, strides);
+        for (int y = 0; y < 1080; y++)
+            memset(planes[0] + y * strides[0], (uint8_t)(i & 0xff), 1920);
+        for (int y = 0; y < 1080 / 2; y++)
+            memset(planes[1] + y * strides[1], 128, 1920);
+        rkvc_frame_set_pts(in_frame, i);
         
         // 推送到编码器
-        rkvc_stream_push(stream, &in_frame);
-        rkvc_frame_free(&in_frame);
+        rkvc_stream_push(stream, in_frame);
+        rkvc_frame_unref(in_frame);
         
         // 3. 拉取编码数据
-        uint8_t *pkt_data = NULL;
-        size_t pkt_size = 0;
-        int64_t pkt_pts = 0;
-        
-        rkvc_err err = rkvc_stream_pull(stream, &pkt_data, &pkt_size, &pkt_pts);
-        if (err == RKVC_OK) {
+        rkvc_packet pkt;
+        while (rkvc_stream_pull(stream, &pkt, 0) == RKVC_OK) {
             // 处理编码数据（发送到网络、写入文件等）
-            // fwrite(pkt_data, 1, pkt_size, fp);
-            free(pkt_data);
+            // fwrite(pkt.data, 1, pkt.size, fp);
         }
+    }
+
+    rkvc_stream_finish(stream);
+    rkvc_packet pkt;
+    while (rkvc_stream_pull(stream, &pkt, -1) == RKVC_OK) {
+        // 取出剩余编码包
     }
     
     // 4. 清理
-    rkvc_stream_destroy(stream);
+    rkvc_stream_close(stream);
     rkvc_deinit();
     return 0;
 }
@@ -374,32 +439,38 @@ int stream_decode_example(void) {
     rkvc_init();
     
     // 1. 创建解码流
-    rkvc_stream_config cfg = {
-        .mode = RKVC_STREAM_DECODE,
-        .buffer_size = 10
-    };
+    rkvc_stream_config cfg = rkvc_stream_config_defaults();
+    cfg.direction = RKVC_STREAM_DECODE;
+    cfg.output_format = RKVC_PIX_FMT_NV12;
+    cfg.buffer_size = 10;
     
     rkvc_stream *stream = NULL;
-    rkvc_stream_create(&stream, &cfg);
+    rkvc_stream_open(&stream, &cfg);
     
     // 2. 推送编码数据（从网络、文件等）
     uint8_t *encoded_data = ...; // 编码数据
-    size_t data_size = ...;
+    int data_size = ...;
     int64_t pts = ...;
     
-    rkvc_stream_push_data(stream, encoded_data, data_size, pts);
+    rkvc_packet pkt = {
+        .data = encoded_data,
+        .size = data_size,
+        .pts = pts,
+        .dts = pts
+    };
+    rkvc_stream_push(stream, &pkt);
     
     // 3. 拉取解码帧
-    rkvc_frame out_frame;
-    rkvc_err err = rkvc_stream_pull_frame(stream, &out_frame);
+    rkvc_frame *out_frame = NULL;
+    rkvc_err err = rkvc_stream_pull(stream, &out_frame, 0);
     if (err == RKVC_OK) {
         // 处理解码帧（显示、保存等）
         // ...
-        rkvc_frame_free(&out_frame);
+        rkvc_frame_unref(out_frame);
     }
     
     // 4. 清理
-    rkvc_stream_destroy(stream);
+    rkvc_stream_close(stream);
     rkvc_deinit();
     return 0;
 }
@@ -420,25 +491,28 @@ int scale_example(void) {
     rkvc_init();
     
     // 源帧（1080p）
-    rkvc_frame src;
+    rkvc_frame *src = NULL;
     rkvc_frame_alloc(&src, 1920, 1080, RKVC_PIX_FMT_NV12);
     // ... 填充 src 数据 ...
     
-    // 目标帧（720p）
-    rkvc_frame dst;
-    rkvc_frame_alloc(&dst, 1280, 720, RKVC_PIX_FMT_NV12);
+    // 目标配置（720p）
+    rkvc_scale_config cfg = {
+        .dst_width = 1280,
+        .dst_height = 720,
+        .dst_format = RKVC_PIX_FMT_NV12
+    };
     
     // 硬件缩放
-    rkvc_err err = rkvc_frame_scale(&src, &dst);
+    rkvc_frame *dst = NULL;
+    rkvc_err err = rkvc_frame_scale(src, &dst, &cfg);
     if (err != RKVC_OK) {
         fprintf(stderr, "Scale failed: %s\n", rkvc_err_str(err));
     }
     
     // dst 现在包含缩放后的数据
-    // dst.pts 自动从 src.pts 复制
     
-    rkvc_frame_free(&src);
-    rkvc_frame_free(&dst);
+    rkvc_frame_unref(src);
+    rkvc_frame_unref(dst);
     rkvc_deinit();
     return 0;
 }
@@ -458,7 +532,7 @@ int scale_example(void) {
 ### 错误码检查
 
 ```c
-rkvc_err err = rkvc_encoder_encode(enc, &frame);
+rkvc_err err = rkvc_encoder_send_frame(enc, frame);
 
 if (err != RKVC_OK) {
     switch (err) {
@@ -495,16 +569,20 @@ if (err != RKVC_OK) {
 
 ### 1. 使用流式 API
 
-流式 API 比文件 API 性能更好，适合实时场景：
+流式 API 适合实时场景：
 - 减少内存拷贝
 - 更低延迟
 - 更灵活的控制
 
 ### 2. 启用低延迟模式
 
-实时应用建议启用：
+实时应用建议关闭 B 帧，并使用解码低延迟模式：
 ```c
-cfg.low_latency = 1;
+rkvc_encoder_config enc_cfg = rkvc_encoder_config_defaults();
+enc_cfg.num_b_frames = 0;
+
+rkvc_decoder_config dec_cfg = rkvc_decoder_config_defaults();
+dec_cfg.low_delay = 1;
 ```
 
 ### 3. 合理设置缓冲区大小
@@ -520,19 +598,28 @@ cfg.buffer_size = 10;  // 默认值，可根据场景调整
 需要缩放时，使用 `rkvc_frame_scale()` 而非软件缩放：
 ```c
 // 好：硬件缩放
-rkvc_frame_scale(&src, &dst);
+rkvc_scale_config cfg = {
+    .dst_width = 1280,
+    .dst_height = 720,
+    .dst_format = -1
+};
+rkvc_frame *dst = NULL;
+rkvc_frame_scale(src, &dst, &cfg);
 
 // 差：软件缩放（CPU 占用高）
-// software_scale(&src, &dst);
+// software_scale(src, dst);
 ```
 
 ### 5. 零拷贝传递
 
 在编解码链路中，尽量避免不必要的内存拷贝：
 ```c
-// 解码 → 编码（零拷贝）
-rkvc_decoder_decode(dec, &frame);
-rkvc_encoder_encode(enc, &frame);  // 直接传递，无拷贝
+// 解码 → 编码
+rkvc_frame *frame = NULL;
+while (rkvc_decoder_receive_frame(dec, &frame) == RKVC_OK) {
+    rkvc_encoder_send_frame(enc, frame);
+    rkvc_frame_unref(frame);
+}
 ```
 
 ### 6. 批量处理
@@ -540,10 +627,12 @@ rkvc_encoder_encode(enc, &frame);  // 直接传递，无拷贝
 批量编码多帧可提高吞吐量：
 ```c
 for (int i = 0; i < batch_size; i++) {
-    rkvc_stream_push(stream, &frames[i]);
+    rkvc_stream_push(stream, frames[i]);
 }
-for (int i = 0; i < batch_size; i++) {
-    rkvc_stream_pull(stream, ...);
+
+rkvc_packet pkt;
+while (rkvc_stream_pull(stream, &pkt, 0) == RKVC_OK) {
+    // 处理编码包
 }
 ```
 
@@ -555,10 +644,15 @@ for (int i = 0; i < batch_size; i++) {
 
 使用硬件缩放统一到编码器期望的分辨率：
 ```c
-rkvc_frame scaled;
-rkvc_frame_alloc(&scaled, target_width, target_height, RKVC_PIX_FMT_NV12);
-rkvc_frame_scale(&input, &scaled);
-rkvc_encoder_encode(enc, &scaled);
+rkvc_scale_config scfg = {
+    .dst_width = target_width,
+    .dst_height = target_height,
+    .dst_format = RKVC_PIX_FMT_NV12
+};
+rkvc_frame *scaled = NULL;
+rkvc_frame_scale(input, &scaled, &scfg);
+rkvc_encoder_send_frame(enc, scaled);
+rkvc_frame_unref(scaled);
 ```
 
 ### Q2: 如何实现多路编码？
@@ -566,9 +660,9 @@ rkvc_encoder_encode(enc, &scaled);
 创建多个编码器实例，每个处理一路流：
 ```c
 rkvc_encoder *enc1, *enc2, *enc3;
-rkvc_encoder_create(&enc1, &cfg1, "stream1.h265");
-rkvc_encoder_create(&enc2, &cfg2, "stream2.h265");
-rkvc_encoder_create(&enc3, &cfg3, "stream3.h265");
+rkvc_encoder_open_file(&enc1, &cfg1, "stream1.h265");
+rkvc_encoder_open_file(&enc2, &cfg2, "stream2.h265");
+rkvc_encoder_open_file(&enc3, &cfg3, "stream3.h265");
 ```
 
 RK3588 支持多路并发编解码。
@@ -596,7 +690,7 @@ rkvc 提供标准 C API，可以与其他视频处理库混合使用。参考示
 
 ## 示例代码参考
 
-所有示例程序源码位于 `examples/src/`，可作为开发参考：
+所有示例程序源码位于 `examples/`，可作为开发参考：
 
 - `encode_file.c` - 文件编码完整示例
 - `decode_file.c` - 文件解码完整示例

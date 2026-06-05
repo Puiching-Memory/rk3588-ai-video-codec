@@ -13,15 +13,19 @@
  *   cfg.fps_num = 30; cfg.fps_den = 1;
  *   cfg.bitrate  = 4000000;
  *
- *   rkvc_err err = rkvc_encoder_open(&enc, &cfg, "output.h265");
+ *   rkvc_err err = rkvc_encoder_open_file(&enc, &cfg, "output.h265");
  *   if (err != RKVC_OK) { ... }
  *
  *   // 送入原始帧 (NV12)
- *   err = rkvc_encoder_send_frame(enc, nv12_data, linesize, pts);
- *   // 取出编码包
+ *   rkvc_frame *frame = NULL;
+ *   rkvc_frame_alloc(&frame, cfg.width, cfg.height, cfg.input_format);
+ *   // 填充 frame 像素数据 ...
+ *   err = rkvc_encoder_send_frame(enc, frame);
+ *   rkvc_frame_unref(frame);
+ *
+ *   // 文件模式下 receive_packet 会自动写入 output.h265
  *   rkvc_packet pkt;
  *   while (rkvc_encoder_receive_packet(enc, &pkt) == RKVC_OK) {
- *       // 处理 pkt.data, pkt.size
  *   }
  *
  *   rkvc_encoder_close(enc);
@@ -29,14 +33,18 @@
  *
  * 典型用法（流式）:
  * @code
- *   rkvc_stream_ctx *stream = NULL;
+ *   rkvc_stream *stream = NULL;
  *   rkvc_stream_config scfg = rkvc_stream_config_defaults();
  *   scfg.direction = RKVC_STREAM_ENCODE;
  *   scfg.width = 1920; scfg.height = 1080;
  *
  *   rkvc_stream_open(&stream, &scfg);
- *   rkvc_stream_push(stream, raw_frame);
- *   rkvc_stream_pull(stream, &out_frame);
+ *   rkvc_stream_push(stream, frame);
+ *
+ *   rkvc_packet pkt;
+ *   while (rkvc_stream_pull(stream, &pkt, 0) == RKVC_OK) {
+ *       // 处理 pkt.data, pkt.size
+ *   }
  *   rkvc_stream_close(stream);
  * @endcode
  */

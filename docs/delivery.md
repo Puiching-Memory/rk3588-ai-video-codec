@@ -1,7 +1,7 @@
 # rkvc 项目交付文档
 
 > **项目名称**: rkvc (RK3588 Video Codec Library)
-> **版本**: 0.1.2
+> **版本**: 0.1.4
 > **目标硬件**: Rockchip RK3588
 > **交付日期**: 2026 年 5 月 14 日
 
@@ -336,15 +336,15 @@ git submodule update --init --depth 1
 ./scripts/package-portable.sh
 
 # 测试可移植包
-./scripts/test-portable.sh build/portable/rkvc-0.1.2-linux-aarch64-portable
+./scripts/test-portable.sh build/portable/rkvc-0.1.4-linux-aarch64-portable
 ```
 
-**产物**: `rkvc-0.1.2-linux-aarch64-portable.tar.gz` (~7.4 MB)
+**产物**: `rkvc-0.1.4-linux-aarch64-portable.tar.gz` (~7.4 MB)
 
 **目录结构**:
 
 ```
-rkvc-0.1.2-linux-aarch64-portable/
+rkvc-0.1.4-linux-aarch64-portable/
 ├── bin/                     # 可执行工具 (RPATH 自包含)
 │   ├── rkvc_encode
 │   ├── rkvc_decode
@@ -364,8 +364,8 @@ rkvc-0.1.2-linux-aarch64-portable/
 
 ```bash
 # 解压
-tar xzf rkvc-0.1.2-linux-aarch64-portable.tar.gz
-cd rkvc-0.1.2-linux-aarch64-portable
+tar xzf rkvc-0.1.4-linux-aarch64-portable.tar.gz
+cd rkvc-0.1.4-linux-aarch64-portable
 
 # 运行工具
 ./bin/rkvc_info
@@ -393,7 +393,7 @@ cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 ninja -C build package
 
 # 安装
-sudo dpkg -i build/packages/rkvc_0.1.2_arm64.deb
+sudo dpkg -i build/packages/rkvc_0.1.4_arm64.deb
 ```
 
 > **注意**: DEB 包依赖系统上的 ffmpeg-rockchip 和 librockchip-mpp（rockchip-mpp 从 `third_party/mpp/` 源码构建）。
@@ -404,7 +404,7 @@ sudo dpkg -i build/packages/rkvc_0.1.2_arm64.deb
 
 ```bash
 ninja -C build package
-# 产物: build/packages/rkvc-0.1.2-Linux.tar.gz
+# 产物: build/packages/rkvc-0.1.4-Linux.tar.gz
 ```
 
 ### 6.4 打包脚本汇总
@@ -441,7 +441,7 @@ void     rkvc_deinit(void);     // 释放全局资源
 ### 7.3 版本与能力查询
 
 ```c
-const char *rkvc_version(void);          // 返回版本字符串，如 "0.1.2"
+const char *rkvc_version(void);          // 返回版本字符串，如 "0.1.4"
 uint32_t    rkvc_version_number(void);   // 返回 major<<16 | minor<<8 | patch
 
 // 运行时能力查询
@@ -588,7 +588,7 @@ rkvc_err rkvc_encoder_open_file(rkvc_encoder **out,
                                 const rkvc_encoder_config *cfg,
                                 const char *output_path);
 
-// 送入帧（调用后引用被编码器接管）
+// 送入帧（调用方送入后仍需释放自己的 rkvc_frame 引用）
 rkvc_err rkvc_encoder_send_frame(rkvc_encoder *enc, rkvc_frame *f);
 
 // 送入原始像素缓冲区（快捷接口）
@@ -738,6 +738,7 @@ int main(void) {
         // memset(planes[1], 128, strides[1] * 540);  // UV
 
         rkvc_encoder_send_frame(enc, f);
+        rkvc_frame_unref(f);
     }
 
     rkvc_encoder_close(enc);
@@ -769,6 +770,7 @@ int main(void) {
         // 填充像素数据 ...
 
         rkvc_encoder_send_frame(enc, f);
+        rkvc_frame_unref(f);
 
         rkvc_packet pkt;
         while (rkvc_encoder_receive_packet(enc, &pkt) == RKVC_OK) {
@@ -791,7 +793,8 @@ int main(void) {
     rkvc_init();
 
     rkvc_decoder *dec = NULL;
-    rkvc_decoder_open_file(&dec, &rkvc_decoder_config_defaults(), "input.h265");
+    rkvc_decoder_config dcfg = rkvc_decoder_config_defaults();
+    rkvc_decoder_open_file(&dec, &dcfg, "input.h265");
 
     rkvc_frame *frame = NULL;
     int frame_count = 0;
@@ -836,6 +839,7 @@ int main(void) {
         rkvc_frame_set_pts(f, i);
         // 填充数据 ...
         rkvc_stream_push(s, f);
+        rkvc_frame_unref(f);
     }
 
     // 消费者线程
@@ -1188,7 +1192,7 @@ rk3588-ai-video-codec/
 ### 12.2 API 限制
 
 - 帧的引用计数必须正确管理，忘记 `rkvc_frame_unref()` 会导致内存泄漏
-- `rkvc_encoder_send_frame()` 后帧的所有权转移给编码器，不应再访问
+- `rkvc_encoder_send_frame()` / `rkvc_stream_push()` 后，调用方应释放自己的帧引用
 - 编码包数据指针仅在 `receive_packet()` 返回后到下一次调用前有效
 - `rkvc_frame_alloc()` 创建的是软件帧，需要通过 `send_frame()` 上传到硬件
 
@@ -1308,6 +1312,7 @@ cfg.width = 1920; cfg.height = 1080;
 rkvc_encoder *enc;
 rkvc_encoder_open_file(&enc, &cfg, "out.h265");
 rkvc_encoder_send_frame(enc, frame);
+rkvc_frame_unref(frame);
 rkvc_encoder_close(enc);
 ```
 
@@ -1315,7 +1320,8 @@ rkvc_encoder_close(enc);
 
 ```c
 rkvc_decoder *dec;
-rkvc_decoder_open_file(&dec, &rkvc_decoder_config_defaults(), "in.h265");
+rkvc_decoder_config cfg = rkvc_decoder_config_defaults();
+rkvc_decoder_open_file(&dec, &cfg, "in.h265");
 rkvc_frame *f;
 while (rkvc_decoder_read_packet(dec) == RKVC_OK)
     while (rkvc_decoder_receive_frame(dec, &f) == RKVC_OK)
