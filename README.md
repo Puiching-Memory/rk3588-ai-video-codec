@@ -74,15 +74,18 @@ RKVC_COVERAGE_MIN_LINE=80 RKVC_COVERAGE_MIN_BRANCH=70 ./scripts/test-strict.sh
 ### 依赖
 
 - Rockchip BSP 内核 (5.10 或 6.1)
-- [ffmpeg-rockchip](https://github.com/nyanmisaka/ffmpeg-rockchip) (`/usr/local/ffmpeg-rockchip`)
-- libdrm-dev
-- CMake >= 3.16
+- `third_party/ffmpeg-rockchip` 和 `third_party/mpp` 子模块
+- libdrm-dev、patchelf（可移植包）
+- SDL2 development package（可选，仅用于 `visual_compare` GUI 示例）
+- CMake >= 3.21（使用 CMake Presets）
 - CMocka (单元测试)
 
 ### 设备权限
 
+运行时会检测 `/dev/mpp_service`、MPP 默认 DMA heap 子节点和 `/dev/rga` 的当前用户权限；权限不足时返回 `RKVC_ERR_PERMISSION`，避免进入第三方 MPP 崩溃路径。
+
 ```bash
-sudo chmod 666 /dev/mpp_service /dev/dma_heap /dev/rga
+sudo chmod 666 /dev/mpp_service /dev/dma_heap/* /dev/rga
 sudo chmod 666 /dev/dri/*
 ```
 
@@ -132,7 +135,7 @@ include/rkvc/         # 公共 API 头文件
     stream.h          # 实时流式处理
 lib/                  # 库实现
 bench/                # 基准测试工具
-examples/             # 示例程序 (encode_file, decode_file, transcode, stream_*, latency_test, psnr_test)
+examples/             # 示例程序 (encode_file, decode_file, transcode, stream_*, latency_test, psnr_test, visual_compare)
 ```
 
 ## 基准测试

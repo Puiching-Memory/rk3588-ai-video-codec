@@ -17,6 +17,8 @@
 #include <getopt.h>
 #include <time.h>
 
+#define INPUT_SNIFF_BYTES 512
+
 static void usage(void) {
     printf(
         "rkvc_encode — H.265 RKMPP 硬件编码工具\n"
@@ -43,7 +45,7 @@ static void usage(void) {
         "  -h, --help            显示帮助\n"
         "\n"
         "示例:\n"
-        "  # 离线编码\n"
+        "  # 离线编码 (输入必须是原始 NV12, 不是 .h265/.mp4 等压缩文件)\n"
         "  rkvc_encode -i raw.nv12 -o out.h265 -s 1920x1080\n"
         "\n"
         "  # 测试图案\n"
@@ -56,6 +58,33 @@ static void usage(void) {
         "  rkvc_encode --stdin --stdout -s 1920x1080 < in.nv12 | \\\n"
         "    rkvc_decode --stdin -o decoded.nv12\n"
     );
+}
+
+static int input_file_is_compressed_video(FILE *fp)
+{
+    uint8_t header[INPUT_SNIFF_BYTES];
+    long pos;
+    size_t n;
+
+    if (!fp)
+        return 0;
+
+    pos = ftell(fp);
+    n = fread(header, 1, sizeof(header), fp);
+    if (pos >= 0)
+        fseek(fp, pos, SEEK_SET);
+    else
+        fseek(fp, 0, SEEK_SET);
+
+    return rkvc_probe_input_format(header, n) == RKVC_INPUT_COMPRESSED_VIDEO;
+}
+
+static void print_compressed_input_error(const char *input)
+{
+    fprintf(stderr,
+            "错误: rkvc_encode 需要原始 NV12 输入，但当前输入看起来是压缩视频码流或容器: %s\n"
+            "提示: H.265/H.264/MP4/MKV 等文件请用 rkvc_decode 测试解码，或用 example_transcode / example_stream_transcode 测试转码。\n",
+            input ? input : "stdin");
 }
 
 static int generate_test_frame(rkvc_frame *f, int idx, int w, int h) {
@@ -133,6 +162,19 @@ int main(int argc, char **argv) {
         return 1;
     }
 
+    FILE *in_fp = NULL;
+    if (input) {
+        in_fp = fopen(input, "rb");
+        if (!in_fp) { perror("打开输入文件失败"); return 1; }
+        if (input_file_is_compressed_video(in_fp)) {
+            print_compressed_input_error(input);
+            fclose(in_fp);
+            return 1;
+        }
+    } else if (use_stdin) {
+        in_fp = stdin;
+    }
+
     rkvc_init();
 
     rkvc_encoder_config cfg = rkvc_encoder_config_defaults();
@@ -160,17 +202,10 @@ int main(int argc, char **argv) {
         fprintf(stderr, "编码 %dx%d@%d, %s → %s\n", width, height, fps,
                 src_name, use_stdout ? "stdout" : output);
 
-    FILE *in_fp = NULL;
-    if (input) {
-        in_fp = fopen(input, "rb");
-        if (!in_fp) { perror("打开输入文件失败"); return 1; }
-    } else if (use_stdin) {
-        in_fp = stdin;
-    }
-
     int frame_count = 0;
     size_t nv12_size = (size_t)width * height * 3 / 2;
     double t0 = now_sec();
+    int failed = 0;
 
     for (int i = 0; testsrc ? (frames < 0 ? 1 : i < frames) : 1; i++) {
         rkvc_frame *f = NULL;
@@ -202,8 +237,16 @@ int main(int argc, char **argv) {
         err = rkvc_encoder_send_frame(enc, f);
         rkvc_frame_unref(f);
 
-        if (err != RKVC_OK && err != RKVC_ERR_AGAIN)
+        if (err == RKVC_ERR_FORMAT) {
+            print_compressed_input_error(src_name);
+            failed = 1;
             break;
+        }
+
+        if (err != RKVC_OK && err != RKVC_ERR_AGAIN) {
+            failed = 1;
+            break;
+        }
 
         /* 取出编码包 (muxer 自动写入) */
         rkvc_packet pkt;
@@ -217,10 +260,12 @@ int main(int argc, char **argv) {
         }
     }
 
-    /* flush */
-    rkvc_encoder_drain(enc);
-    rkvc_packet pkt;
-    while (rkvc_encoder_receive_packet(enc, &pkt) == RKVC_OK) {}
+    if (!failed) {
+        /* flush */
+        rkvc_encoder_drain(enc);
+        rkvc_packet pkt;
+        while (rkvc_encoder_receive_packet(enc, &pkt) == RKVC_OK) {}
+    }
 
     double elapsed = now_sec() - t0;
     rkvc_encoder_close(enc);
@@ -234,5 +279,5 @@ int main(int argc, char **argv) {
                 use_stdout ? "stdout" : output);
 
     rkvc_deinit();
-    return 0;
+    return failed ? 1 : 0;
 }

@@ -4,7 +4,7 @@
 
 - Rockchip BSP 内核 (5.10 或 6.1)
 - libdrm-dev、patchelf（可移植包打包依赖）
-- CMake >= 3.16、Ninja（推荐）
+- CMake >= 3.21、Ninja（推荐）
 - GCC / Clang（C11 支持）
 - CMocka（测试框架，可选）
 
@@ -13,8 +13,10 @@
 
 ## 设备权限
 
+运行时会检测当前用户是否可访问硬件编解码设备、MPP 默认 DMA heap 子节点和 RGA 设备；权限不足会返回 `RKVC_ERR_PERMISSION`。
+
 ```bash
-sudo chmod 666 /dev/mpp_service /dev/dma_heap /dev/rga
+sudo chmod 666 /dev/mpp_service /dev/dma_heap/* /dev/rga
 sudo chmod 666 /dev/dri/*
 ```
 

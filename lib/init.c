@@ -4,8 +4,11 @@
  */
 
 #include "internal.h"
+#include <errno.h>
+#include <fcntl.h>
+#include <limits.h>
 #include <pthread.h>
-#include <sys/stat.h>
+#include <unistd.h>
 
 #define RKVC_VERSION_STR "0.1.4"
 #define RKVC_VERSION_NUM 0x000104
@@ -64,11 +67,179 @@ const char *rkvc_err_str(rkvc_err err)
     case RKVC_ERR_AGAIN:     return "need more input / output full";
     case RKVC_ERR_MUX:       return "muxer error";
     case RKVC_ERR_INTERNAL:  return "internal error";
+    case RKVC_ERR_PERMISSION: return "device permission denied";
+    case RKVC_ERR_FORMAT:    return "input format mismatch";
     }
     return "unknown error";
 }
 
 /* ── 能力查询 ──────────────────────────────────────────────────────── */
+
+static void rkvc_dev_path(const char *path, char *buf, size_t size)
+{
+#ifdef RKVC_ENABLE_FAULT_INJECTION
+    const char *root = getenv("RKVC_TEST_DEV_ROOT");
+    if (root && root[0] != '\0') {
+        snprintf(buf, size, "%s%s", root, path);
+        return;
+    }
+#endif
+    snprintf(buf, size, "%s", path);
+}
+
+static int rkvc_test_dev_path_denied(const char *path)
+{
+#ifdef RKVC_ENABLE_FAULT_INJECTION
+    const char *deny = getenv("RKVC_TEST_DENY_DEV_PATH");
+    if (deny && strcmp(deny, path) == 0)
+        return 1;
+#endif
+    (void)path;
+    return 0;
+}
+
+static int rkvc_dev_access(const char *path, int mode)
+{
+    if (rkvc_test_dev_path_denied(path)) {
+        errno = EACCES;
+        return -1;
+    }
+
+    char resolved[PATH_MAX];
+    rkvc_dev_path(path, resolved, sizeof(resolved));
+    return access(resolved, mode);
+}
+
+static int any_path_accessible(const char *const *paths, int mode)
+{
+    for (int i = 0; paths[i]; i++) {
+        if (rkvc_dev_access(paths[i], mode) == 0)
+            return 1;
+    }
+    return 0;
+}
+
+static int mpp_codec_device_accessible(void)
+{
+    static const char *const paths[] = {
+        "/dev/mpp_service",
+        "/dev/mpp-service",
+        "/dev/rkvenc",
+        "/dev/rkvdec",
+        "/dev/h265e",
+        "/dev/hevc_service",
+        "/dev/hevc-service",
+        "/dev/vpu_service",
+        "/dev/vpu-service",
+        NULL
+    };
+
+    return any_path_accessible(paths, R_OK | W_OK);
+}
+
+static int path_openable(const char *path, int flags)
+{
+    if (rkvc_test_dev_path_denied(path)) {
+        errno = EACCES;
+        return 0;
+    }
+
+    char resolved[PATH_MAX];
+    rkvc_dev_path(path, resolved, sizeof(resolved));
+
+    int fd = open(resolved, flags | O_CLOEXEC);
+    if (fd < 0)
+        return 0;
+
+    close(fd);
+    return 1;
+}
+
+static int dma_heap_runtime_selected(void)
+{
+    /*
+     * MPP marks DMA heap valid from the directory permission alone. If this is
+     * true it prefers DMA heap over DRM/ION, so child heap permissions must be
+     * checked before entering RKMPP.
+     */
+    return rkvc_dev_access("/dev/dma_heap", F_OK | R_OK) == 0;
+}
+
+static int drm_allocator_accessible(void)
+{
+    static const char *const paths[] = {
+        "/dev/dri/renderD128",
+        "/dev/dri/renderD129",
+        "/dev/dri/card0",
+        "/dev/dri/card1",
+        NULL
+    };
+
+    return any_path_accessible(paths, R_OK | W_OK);
+}
+
+static int ion_allocator_accessible(void)
+{
+    static const char *const paths[] = {
+        "/dev/ion",
+        NULL
+    };
+
+    return any_path_accessible(paths, R_OK | W_OK);
+}
+
+static int mpp_default_dma_heap_accessible(void)
+{
+    /*
+     * rockchip-mpp opens type 0 as /dev/dma_heap/system-uncached. If that
+     * fails, it only remaps type 0 by flipping cacheable/dma32 flags, so cma*
+     * heaps are not valid fallbacks for the default encoder/decoder path.
+     */
+    static const char *const names[] = {
+        "system-uncached",
+        "system",
+        "system-uncached-dma32",
+        "system-dma32",
+        NULL
+    };
+
+    for (int i = 0; names[i]; i++) {
+        char path[PATH_MAX];
+
+        int written = snprintf(path, sizeof(path), "/dev/dma_heap/%s",
+                               names[i]);
+        if (written < 0 || (size_t)written >= sizeof(path))
+            continue;
+
+        if (path_openable(path, O_RDONLY))
+            return 1;
+    }
+
+    return 0;
+}
+
+rkvc_err rkvc_check_hw_permissions(void)
+{
+    if (!mpp_codec_device_accessible()) {
+        RKVC_LOG("MPP codec device permission denied: /dev/mpp_service or legacy codec nodes");
+        return RKVC_ERR_PERMISSION;
+    }
+
+    if (dma_heap_runtime_selected()) {
+        if (!mpp_default_dma_heap_accessible()) {
+            RKVC_LOG("MPP default DMA heap permission denied: /dev/dma_heap/system-uncached");
+            return RKVC_ERR_PERMISSION;
+        }
+        return RKVC_OK;
+    }
+
+    if (!drm_allocator_accessible() && !ion_allocator_accessible()) {
+        RKVC_LOG("DMA-BUF allocator permission denied: /dev/dma_heap/* or /dev/dri/*");
+        return RKVC_ERR_PERMISSION;
+    }
+
+    return RKVC_OK;
+}
 
 rkvc_err rkvc_query_caps(rkvc_caps *caps)
 {
@@ -77,20 +248,21 @@ rkvc_err rkvc_query_caps(rkvc_caps *caps)
 
     memset(caps, 0, sizeof(*caps));
 
+    rkvc_err hw_perm = rkvc_check_hw_permissions();
+    int hw_usable = (hw_perm == RKVC_OK);
+
     /* 检查 RKMPP 编码器 */
     const AVCodec *enc = avcodec_find_encoder_by_name("hevc_rkmpp");
-    caps->has_rkmpp_enc = (enc != NULL);
+    caps->has_rkmpp_enc = (enc != NULL && hw_usable);
 
     /* 检查 RKMPP 解码器 */
     const AVCodec *dec = avcodec_find_decoder_by_name("hevc_rkmpp");
-    caps->has_rkmpp_dec = (dec != NULL);
+    caps->has_rkmpp_dec = (dec != NULL && hw_usable);
 
-    /* 检查 /dev/dma_heap */
-    struct stat st;
-    caps->has_dma_heap = (stat("/dev/dma_heap", &st) == 0);
+    caps->has_dma_heap = mpp_default_dma_heap_accessible();
 
     /* 检查 /dev/rga */
-    caps->has_rga = (stat("/dev/rga", &st) == 0);
+    caps->has_rga = (rkvc_dev_access("/dev/rga", R_OK | W_OK) == 0);
 
     /* RK3588 最大分辨率 */
     caps->max_width  = 7680;

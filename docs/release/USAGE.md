@@ -30,7 +30,7 @@ rkvc_encode --testsrc -o output.h265 -s 1920x1080 -n 100
 
 **常用参数**：
 - `--testsrc` — 使用测试图案作为输入
-- `-i <file>` — 输入文件（原始 NV12/YUV420P 格式）
+- `-i <file>` — 输入文件（原始 NV12/YUV420P 格式，不是 H.265/MP4 等压缩文件）
 - `-o <file>` — 输出文件
 - `-s <WxH>` — 分辨率（如 1920x1080）
 - `-n <count>` — 编码帧数
@@ -42,6 +42,8 @@ rkvc_encode --testsrc -o output.h265 -s 1920x1080 -n 100
 ```bash
 # 编码原始 YUV 文件
 rkvc_encode -i input.yuv -o output.h265 -s 1920x1080 -n 300
+
+# 已编码 H.265/MP4 样本请使用 rkvc_decode 或转码示例
 
 # 高码率编码
 rkvc_encode --testsrc -o high_quality.h265 -s 3840x2160 -b 20000000 -n 100
@@ -132,22 +134,28 @@ rkvc_bench
 
 模拟两台设备之间的实时流式传输：
 
+**本机端到端回环测试**：
+```bash
+./network-e2e-test.sh
+./network-e2e-test.sh --mode rtp --frames 30
+```
+
 **UDP 模式**：
 ```bash
 # 发送端（设备 A）
-./examples/bin/example_stream_device_pair -i input.h265 -m udp -r send -a 192.168.1.100 -p 5000
+./examples/bin/example_stream_device_pair -i input.h265 -c udp -r send --dst-ip 192.168.1.100 --dst-port 5000
 
 # 接收端（设备 B）
-./examples/bin/example_stream_device_pair -m udp -r recv -p 5000
+./examples/bin/example_stream_device_pair -c udp -r recv --bind-port 5000
 ```
 
 **RTP 模式**：
 ```bash
 # 发送端
-./examples/bin/example_stream_device_pair -i input.h265 -m rtp -r send -a 192.168.1.100 -p 5004
+./examples/bin/example_stream_device_pair -i input.h265 -c rtp -r send --dst-ip 192.168.1.100 --dst-port 5004
 
 # 接收端
-./examples/bin/example_stream_device_pair -m rtp -r recv -p 5004
+./examples/bin/example_stream_device_pair -c rtp -r recv --bind-port 5004
 ```
 
 ### 延迟测试
@@ -178,15 +186,32 @@ rkvc_bench
 
 输出 Y/U/V 通道 PSNR 及加权平均值。
 
+### 可视化质量预览
+
+SDL2 GUI 示例会并排显示输入帧和重新编码解码后的预览画面，并实时显示码率、延迟、稳定性和 PSNR：
+
+```bash
+./examples/bin/example_visual_compare -i input.h265 -b 4000000 -n 300 -l
+```
+
+该示例仅在构建环境检测到 SDL2 development package 时生成。
+
 ## 常见问题
 
 ### 权限错误
 
-如遇权限错误，请联系技术支持配置设备权限。
+如遇 `device permission denied` 或权限相关错误，请联系技术支持配置设备权限。
+程序会在硬件编解码启动前检测必要设备节点，权限不足时会提前失败。
 
 ### 库依赖缺失
 
-如遇到库依赖问题，请联系技术支持获取必要的运行时库。
+可移植包已携带核心运行时库，并设置工具程序 RPATH。若仍遇到库依赖问题，请先运行：
+
+```bash
+./test.sh
+```
+
+如自测失败，请将输出提供给技术支持。
 
 ### 性能优化
 
@@ -196,8 +221,8 @@ rkvc_bench
 
 ## 环境变量
 
-- `LD_LIBRARY_PATH` — 如果使用可移植包，需设置为 `$PWD/lib`
-- `PKG_CONFIG_PATH` — 如果使用可移植包，需设置为 `$PWD/share/pkgconfig`
+- `LD_LIBRARY_PATH` — 包内工具通常无需设置；自编译应用未设置 RPATH 时可设为 `$PWD/lib`
+- `PKG_CONFIG_PATH` — 使用包内 `rkvc.pc` 二次开发时设为 `$PWD/share/pkgconfig`
 
 **示例**：
 ```bash

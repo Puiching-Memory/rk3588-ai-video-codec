@@ -28,18 +28,19 @@
 
 ### 设置环境变量
 
-使用可移植包时，需要设置以下环境变量：
+使用可移植包自带工具和示例程序时通常无需设置 `LD_LIBRARY_PATH`。进行二次开发时，建议设置 `PKG_CONFIG_PATH`；如果自编译程序没有写入 RPATH，再设置 `LD_LIBRARY_PATH`：
 
 ```bash
-export LD_LIBRARY_PATH=/path/to/rkvc/lib:$LD_LIBRARY_PATH
 export PKG_CONFIG_PATH=/path/to/rkvc/share/pkgconfig:$PKG_CONFIG_PATH
+export LD_LIBRARY_PATH=/path/to/rkvc/lib:$LD_LIBRARY_PATH
 ```
 
-建议将这些命令添加到 `~/.bashrc` 或项目启动脚本中。
+可将这些命令添加到项目启动脚本中。
 
 ### 设备权限
 
 确保应用程序有权限访问硬件设备。生产环境建议通过 udev 规则配置权限。
+库会在硬件编解码启动前检测必要设备权限；权限不足时返回 `RKVC_ERR_PERMISSION`。
 
 ---
 
@@ -147,7 +148,9 @@ typedef enum {
     RKVC_ERR_EOF,
     RKVC_ERR_AGAIN,
     RKVC_ERR_MUX,
-    RKVC_ERR_INTERNAL
+    RKVC_ERR_INTERNAL,
+    RKVC_ERR_PERMISSION,
+    RKVC_ERR_FORMAT
 } rkvc_err;
 ```
 
@@ -546,6 +549,10 @@ if (err != RKVC_OK) {
         // 硬件错误，可能需要重启编码器
         fprintf(stderr, "Hardware error: %s\n", rkvc_err_str(err));
         break;
+    case RKVC_ERR_PERMISSION:
+        // 设备权限不足，需检查部署权限
+        fprintf(stderr, "Permission error: %s\n", rkvc_err_str(err));
+        break;
     default:
         fprintf(stderr, "Error: %s\n", rkvc_err_str(err));
         break;
@@ -559,7 +566,9 @@ if (err != RKVC_OK) {
 | ------------------ | ------------------------- | -------------------------- |
 | `RKVC_ERR_AGAIN`   | 需要更多输入/输出缓冲区满 | 稍后重试                   |
 | `RKVC_ERR_EOF`     | 流结束                    | 正常结束                   |
-| `RKVC_ERR_HW`      | 硬件错误                  | 检查设备权限，重启编解码器 |
+| `RKVC_ERR_PERMISSION` | 设备权限不足           | 检查设备节点权限           |
+| `RKVC_ERR_FORMAT`  | 输入格式不匹配            | 编码输入应为原始 NV12，压缩码流请先解码或转码 |
+| `RKVC_ERR_HW`      | 硬件错误                  | 检查硬件状态，重启编解码器 |
 | `RKVC_ERR_NOMEM`   | 内存不足                  | 减少缓冲区大小             |
 | `RKVC_ERR_INVALID` | 参数错误                  | 检查配置参数               |
 

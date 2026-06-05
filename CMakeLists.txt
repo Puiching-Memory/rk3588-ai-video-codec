@@ -13,6 +13,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 option(RKVC_BUILD_SHARED   "Build shared library"      ON)
 option(RKVC_BUILD_STATIC   "Build static library"      ON)
 option(RKVC_BUILD_EXAMPLES "Build example programs"    ON)
+option(RKVC_BUILD_GUI_EXAMPLES "Build optional SDL2 GUI examples" ON)
 option(RKVC_BUILD_TOOLS    "Build CLI tools"           ON)
 option(RKVC_BUILD_TESTS    "Build unit tests (CMocka)" OFF)
 option(RKVC_ENABLE_ASAN    "Enable AddressSanitizer"   OFF)
@@ -38,11 +39,26 @@ set(MPP_BUILD_DIR "${CMAKE_BINARY_DIR}/mpp_build" CACHE PATH "MPP build output d
 set(MPP_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/third_party/mpp/inc")
 set(MPP_LIB_DIR "${MPP_BUILD_DIR}/mpp")
 
+set(RKVC_DEP_LIB_DIRS
+    ${AVCODEC_LIB_DIRS}
+    ${MPP_LIB_DIR}
+)
+
+set(RKVC_RPATH_LINK_OPTIONS "")
+foreach(RKVC_DEP_LIB_DIR IN LISTS RKVC_DEP_LIB_DIRS)
+    list(APPEND RKVC_RPATH_LINK_OPTIONS "-Wl,-rpath-link,${RKVC_DEP_LIB_DIR}")
+endforeach()
+
 # ── 源文件 ─────────────────────────────────────────────────────────────
 # FFmpeg 静态库存在循环依赖，需要用 --start-group/--end-group 包裹
 set(FFMPEG_LIBS -Wl,--start-group avcodec avformat avutil -Wl,--end-group)
 # 外部依赖：MPP、zlib、drm
-set(EXTRA_LIBS rockchip_mpp z drm pthread m rga rt)
+set(EXTRA_LIBS
+    -Wl,--no-as-needed
+    rockchip_mpp
+    -Wl,--as-needed
+    z drm pthread m rga rt
+)
 set(RKVC_SOURCES
     lib/init.c
     lib/frame.c
@@ -112,7 +128,8 @@ if(RKVC_BUILD_SHARED)
             ${MPP_INCLUDE_DIR}
             ${CMAKE_CURRENT_SOURCE_DIR}/lib
     )
-    target_link_directories(rkvc_shared PRIVATE ${AVCODEC_LIB_DIRS} ${MPP_LIB_DIR})
+    target_link_directories(rkvc_shared PRIVATE ${RKVC_DEP_LIB_DIRS})
+    target_link_options(rkvc_shared PRIVATE ${RKVC_RPATH_LINK_OPTIONS})
     target_link_libraries(rkvc_shared PRIVATE rkvc_instrumentation ${FFMPEG_LIBS} ${EXTRA_LIBS})
     set_target_properties(rkvc_shared PROPERTIES
         OUTPUT_NAME rkvc
@@ -135,7 +152,8 @@ if(RKVC_BUILD_STATIC)
             ${MPP_INCLUDE_DIR}
             ${CMAKE_CURRENT_SOURCE_DIR}/lib
     )
-    target_link_directories(rkvc_static PUBLIC ${AVCODEC_LIB_DIRS} ${MPP_LIB_DIR})
+    target_link_directories(rkvc_static PUBLIC ${RKVC_DEP_LIB_DIRS})
+    target_link_options(rkvc_static INTERFACE ${RKVC_RPATH_LINK_OPTIONS})
     target_link_libraries(rkvc_static PUBLIC rkvc_instrumentation ${FFMPEG_LIBS} ${EXTRA_LIBS})
     set_target_properties(rkvc_static PROPERTIES OUTPUT_NAME rkvc)
     add_library(rkvc::static ALIAS rkvc_static)
@@ -159,7 +177,12 @@ if(RKVC_BUILD_EXAMPLES)
             target_include_directories(example_${EXAMPLE}
                 PRIVATE ${AVCODEC_INCLUDE_DIRS})
             target_link_directories(example_${EXAMPLE}
-                PRIVATE ${AVCODEC_LIB_DIRS})
+                PRIVATE ${RKVC_DEP_LIB_DIRS})
+            target_link_options(example_${EXAMPLE}
+                PRIVATE ${RKVC_RPATH_LINK_OPTIONS})
+            set_target_properties(example_${EXAMPLE} PROPERTIES
+                BUILD_RPATH "${CMAKE_CURRENT_BINARY_DIR};${RKVC_DEP_LIB_DIRS}"
+            )
             list(APPEND EXAMPLE_TARGETS example_${EXAMPLE})
         endif()
     endforeach()
@@ -167,6 +190,40 @@ if(RKVC_BUILD_EXAMPLES)
     # psnr_test 使用 math 库 (log10)
     if(TARGET example_psnr_test)
         target_link_libraries(example_psnr_test PRIVATE m)
+    endif()
+
+    if(TARGET example_stream_device_pair)
+        target_link_libraries(example_stream_device_pair PRIVATE pthread)
+    endif()
+
+    if(RKVC_BUILD_GUI_EXAMPLES)
+        find_package(PkgConfig QUIET)
+        if(PkgConfig_FOUND)
+            pkg_check_modules(SDL2 QUIET sdl2)
+        endif()
+
+        if(SDL2_FOUND AND EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/examples/visual_compare.c")
+            add_executable(example_visual_compare examples/visual_compare.c)
+            target_link_libraries(example_visual_compare PRIVATE rkvc m ${SDL2_LIBRARIES})
+            target_include_directories(example_visual_compare
+                PRIVATE
+                    ${AVCODEC_INCLUDE_DIRS}
+                    ${SDL2_INCLUDE_DIRS}
+            )
+            target_link_directories(example_visual_compare
+                PRIVATE
+                    ${RKVC_DEP_LIB_DIRS}
+                    ${SDL2_LIBRARY_DIRS}
+            )
+            target_compile_options(example_visual_compare PRIVATE ${SDL2_CFLAGS_OTHER})
+            target_link_options(example_visual_compare PRIVATE ${RKVC_RPATH_LINK_OPTIONS})
+            set_target_properties(example_visual_compare PROPERTIES
+                BUILD_RPATH "${CMAKE_CURRENT_BINARY_DIR};${RKVC_DEP_LIB_DIRS}"
+            )
+            list(APPEND EXAMPLE_TARGETS example_visual_compare)
+        else()
+            message(STATUS "SDL2 not found, skipping example_visual_compare")
+        endif()
     endif()
 endif()
 
@@ -188,11 +245,13 @@ if(RKVC_BUILD_TOOLS)
             target_include_directories(${TOOL_NAME}
                 PRIVATE ${AVCODEC_INCLUDE_DIRS})
             target_link_directories(${TOOL_NAME}
-                PRIVATE ${AVCODEC_LIB_DIRS})
+                PRIVATE ${RKVC_DEP_LIB_DIRS})
+            target_link_options(${TOOL_NAME}
+                PRIVATE ${RKVC_RPATH_LINK_OPTIONS})
             # RPATH: 安装后从 bin/ 找 ../lib/ 中的 .so
             set_target_properties(${TOOL_NAME} PROPERTIES
                 INSTALL_RPATH "$ORIGIN/../lib"
-                BUILD_RPATH   "${CMAKE_CURRENT_BINARY_DIR};${AVCODEC_LIB_DIRS}"
+                BUILD_RPATH   "${CMAKE_CURRENT_BINARY_DIR};${RKVC_DEP_LIB_DIRS}"
             )
             list(APPEND RKVC_TOOLS ${TOOL_NAME})
         endif()
@@ -298,10 +357,21 @@ if(RKVC_BUILD_TESTS)
     )
 
     if(RKVC_ENABLE_FAULT_INJECTION)
+        list(APPEND RKVC_TEST_SOURCES tests/test_permissions.c)
         list(APPEND RKVC_TEST_SOURCES tests/test_fault_injection.c)
     endif()
 
     set(RKVC_TEST_TARGETS "")
+    string(REPLACE ";" ":" RKVC_TEST_LIBRARY_PATH "${RKVC_DEP_LIB_DIRS}")
+    set(RKVC_TEST_ENVIRONMENT
+        "LD_LIBRARY_PATH=${RKVC_TEST_LIBRARY_PATH}:$ENV{LD_LIBRARY_PATH}"
+    )
+    if(RKVC_ENABLE_ASAN OR RKVC_ENABLE_UBSAN)
+        list(APPEND RKVC_TEST_ENVIRONMENT
+            "ASAN_OPTIONS=detect_leaks=0:halt_on_error=1:abort_on_error=1"
+            "UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1"
+        )
+    endif()
 
     foreach(TEST_SRC ${RKVC_TEST_SOURCES})
         get_filename_component(TEST_NAME ${TEST_SRC} NAME_WE)
@@ -316,33 +386,59 @@ if(RKVC_BUILD_TESTS)
         )
         target_link_directories(${TEST_NAME}
             PRIVATE
-                ${AVCODEC_LIB_DIRS}
+                ${RKVC_DEP_LIB_DIRS}
                 ${CMOCKA_LIBRARY_DIRS}
         )
+        target_link_options(${TEST_NAME}
+            PRIVATE ${RKVC_RPATH_LINK_OPTIONS}
+        )
         add_test(NAME ${TEST_NAME} COMMAND ${TEST_NAME})
-        set_tests_properties(${TEST_NAME} PROPERTIES LABELS unit)
+        set_tests_properties(${TEST_NAME} PROPERTIES
+            LABELS unit
+            ENVIRONMENT "${RKVC_TEST_ENVIRONMENT}"
+        )
         if(TEST_NAME STREQUAL "test_hardware")
             set_tests_properties(${TEST_NAME} PROPERTIES
                 LABELS integration
                 SKIP_RETURN_CODE 77
-            )
-        endif()
-        if(RKVC_ENABLE_ASAN OR RKVC_ENABLE_UBSAN)
-            set_tests_properties(${TEST_NAME} PROPERTIES
-                ENVIRONMENT
-                    "ASAN_OPTIONS=detect_leaks=0:halt_on_error=1:abort_on_error=1;UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1"
+                ENVIRONMENT "${RKVC_TEST_ENVIRONMENT}"
             )
         endif()
         list(APPEND RKVC_TEST_TARGETS ${TEST_NAME})
     endforeach()
 
+    set(RKVC_CHECK_DEPENDS ${RKVC_TEST_TARGETS})
+    if(RKVC_BUILD_TOOLS)
+        list(APPEND RKVC_CHECK_DEPENDS ${RKVC_TOOLS})
+    endif()
+
     add_custom_target(check
         COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
-        DEPENDS ${RKVC_TEST_TARGETS}
+        DEPENDS ${RKVC_CHECK_DEPENDS}
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
         COMMENT "Building and running rkvc unit tests"
         VERBATIM
     )
+
+    if(RKVC_BUILD_TOOLS)
+        add_test(NAME test_cli_args
+            COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_cli_args.sh
+                    ${CMAKE_CURRENT_BINARY_DIR}
+        )
+        set_tests_properties(test_cli_args PROPERTIES
+            LABELS unit
+            ENVIRONMENT "${RKVC_TEST_ENVIRONMENT}"
+        )
+
+        add_test(NAME test_bench_permission_failure
+            COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_bench_permission_failure.sh
+                    ${CMAKE_CURRENT_BINARY_DIR}
+        )
+        set_tests_properties(test_bench_permission_failure PROPERTIES
+            LABELS unit
+            ENVIRONMENT "${RKVC_TEST_ENVIRONMENT}"
+        )
+    endif()
 endif()
 
 # ── Doxygen API 文档 ─────────────────────────────────────────────────

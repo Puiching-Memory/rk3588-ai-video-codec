@@ -4,6 +4,7 @@
  */
 
 #include "internal.h"
+#include <errno.h>
 #include <pthread.h>
 
 /* ── Project-owned allocation wrappers ─────────────────────────────── */
@@ -81,6 +82,103 @@ void rkvc_free(void *ptr)
     free(ptr);
 }
 
+/* ── Input format sniffing ─────────────────────────────────────────── */
+
+static int annexb_start_code_at(const uint8_t *data, size_t size,
+                                size_t pos, size_t *nal_offset)
+{
+    if (pos + 4 <= size && data[pos] == 0x00 && data[pos + 1] == 0x00 &&
+        data[pos + 2] == 0x01) {
+        *nal_offset = pos + 3;
+        return 1;
+    }
+
+    if (pos + 5 <= size && data[pos] == 0x00 && data[pos + 1] == 0x00 &&
+        data[pos + 2] == 0x00 && data[pos + 3] == 0x01) {
+        *nal_offset = pos + 4;
+        return 1;
+    }
+
+    return 0;
+}
+
+static int has_annexb_start_code(const uint8_t *data, size_t size,
+                                 size_t *nal_offset)
+{
+    return annexb_start_code_at(data, size, 0, nal_offset);
+}
+
+static int is_h264_or_h265_annexb(const uint8_t *data, size_t size)
+{
+    size_t nal_offset = 0;
+    int h264_sps = 0;
+    int h264_pps = 0;
+    int h265_vps = 0;
+    int h265_sps = 0;
+    int h265_pps = 0;
+
+    if (!has_annexb_start_code(data, size, &nal_offset) ||
+        nal_offset >= size)
+        return 0;
+
+    for (size_t pos = 0; pos + 4 <= size; pos++) {
+        if (!annexb_start_code_at(data, size, pos, &nal_offset) ||
+            nal_offset >= size)
+            continue;
+
+        uint8_t h264_type = data[nal_offset] & 0x1f;
+        uint8_t h265_type = (data[nal_offset] >> 1) & 0x3f;
+
+        h264_sps |= (h264_type == 7);
+        h264_pps |= (h264_type == 8);
+        h265_vps |= (h265_type == 32);
+        h265_sps |= (h265_type == 33);
+        h265_pps |= (h265_type == 34);
+
+        if ((h264_sps && h264_pps) ||
+            (h265_vps && (h265_sps || h265_pps)) ||
+            (h265_sps && h265_pps))
+            return 1;
+
+        pos = nal_offset;
+    }
+
+    return 0;
+}
+
+int rkvc_buffer_looks_compressed_video(const uint8_t *data, size_t size)
+{
+    if (!data || size < 4)
+        return 0;
+
+    if (is_h264_or_h265_annexb(data, size))
+        return 1;
+
+    if (size >= 12 && memcmp(data + 4, "ftyp", 4) == 0)
+        return 1;
+
+    if (size >= 4 && data[0] == 0x1a && data[1] == 0x45 &&
+        data[2] == 0xdf && data[3] == 0xa3)
+        return 1;
+
+    if (size > 188 && data[0] == 0x47 && data[188] == 0x47)
+        return 1;
+
+    return 0;
+}
+
+rkvc_input_format_probe rkvc_probe_input_format(const uint8_t *data,
+                                                size_t size)
+{
+    if (!data || size == 0)
+        return RKVC_INPUT_UNKNOWN;
+
+    if (rkvc_buffer_looks_compressed_video(data, size))
+        return RKVC_INPUT_COMPRESSED_VIDEO;
+
+    return RKVC_INPUT_UNKNOWN;
+}
+
 /* ── FFmpeg 错误码映射 ─────────────────────────────────────────────── */
 
 rkvc_err rkvc_from_averror(int av_err)
@@ -93,6 +191,8 @@ rkvc_err rkvc_from_averror(int av_err)
     case AVERROR(EINVAL):     return RKVC_ERR_INVALID;
     case AVERROR(ENOENT):     return RKVC_ERR_NOT_FOUND;
     case AVERROR(EIO):        return RKVC_ERR_IO;
+    case AVERROR(EACCES):     return RKVC_ERR_PERMISSION;
+    case AVERROR(EPERM):      return RKVC_ERR_PERMISSION;
     case AVERROR_EOF:         return RKVC_ERR_EOF;
     case AVERROR(EAGAIN):     return RKVC_ERR_AGAIN;
     case AVERROR(ENODEV):     return RKVC_ERR_HW;

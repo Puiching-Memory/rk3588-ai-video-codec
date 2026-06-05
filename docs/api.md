@@ -24,6 +24,15 @@ if (err != RKVC_OK) {
 }
 ```
 
+常见运行时错误包括：
+
+| 错误码                 | 含义                 |
+| ---------------------- | -------------------- |
+| `RKVC_ERR_AGAIN`       | 需要更多输入或输出满 |
+| `RKVC_ERR_PERMISSION`  | 设备节点权限不足     |
+| `RKVC_ERR_FORMAT`      | 输入格式不匹配       |
+| `RKVC_ERR_HW`          | 硬件初始化或执行失败 |
+
 ### 帧管理
 
 `rkvc_frame` 使用引用计数管理生命周期：
@@ -135,6 +144,8 @@ rkvc_stream_close(s);
 ```bash
 # 离线文件
 rkvc_encode -i raw.nv12 -o out.h265 -s 1920x1080 -b 4M
+
+# 已编码的 .h265/.mp4 不是编码输入；请用 rkvc_decode 或转码示例
 
 # 测试图案
 rkvc_encode --testsrc -o out.h265 -s 1920x1080 -n 300

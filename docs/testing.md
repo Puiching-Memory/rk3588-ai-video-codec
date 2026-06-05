@@ -15,14 +15,17 @@
 | 层级       | 目标                                                                 | 说明                                                                                       |
 | ---------- | -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
 | 基础契约   | `tests/test_types.c`, `tests/test_frame.c`, `tests/test_contracts.c` | 版本、错误码、帧生命周期、公共 API 参数校验、I/O 缺失路径                                  |
-| 内部一致性 | `tests/test_internal.c`                                              | FFmpeg 错误码映射、枚举校验、像素格式转换、内部帧包装                                      |
+| 内部一致性 | `tests/test_internal.c`                                              | FFmpeg 错误码映射、枚举校验、像素格式转换、内部帧包装、流式 API 边界状态                   |
+| 权限门控   | `tests/test_permissions.c`                                           | fake `/dev` 覆盖 MPP service、默认 DMA heap、DRM fallback 和能力查询权限回归               |
 | 异常注入   | `tests/test_fault_injection.c`                                       | `RKVC_ENABLE_FAULT_INJECTION` 下确定性模拟项目自有分配 OOM                                 |
 | 硬件集成   | `tests/test_hardware.c`                                              | 自动探测 RKMPP 设备；可用时执行 H.265 硬件编码/解码文件往返，不可用时 CTest skip           |
+| 工具脚本   | `tests/test_cli_args.sh`, `tests/test_bench_permission_failure.sh`   | `full-tests` 下覆盖 CLI 参数错误和 bench 权限失败传播                                      |
+| 可移植包   | `scripts/test-portable.sh`                                           | 包完整性、依赖/RPATH、编解码、本机网络回环、pkg-config 最小编译、CLI 和包结构负向测试      |
 | 动态分析   | `asan` preset                                                        | AddressSanitizer + UndefinedBehaviorSanitizer；当前环境下 LSan 关闭，泄漏检查交给 Valgrind |
 | 覆盖率     | `coverage` preset                                                    | 用 gcov instrumentation 重新编译并执行同一测试集                                           |
 | 严格门禁   | `scripts/test-strict.sh`                                             | 顺序执行 `tests`、`asan`、`coverage`，有 Valgrind/gcovr 时自动附加报告                     |
 
-`RKVC_ENABLE_FAULT_INJECTION` 默认关闭，只在测试 preset 中启用，交付库不会暴露测试钩子。
+`RKVC_ENABLE_FAULT_INJECTION` 默认关闭，只在测试 preset 中启用，交付库不会暴露测试钩子。当前 `tests` preset 注册 8 个 CTest 目标，包含 68 个 CMocka 用例；`full-tests` 额外构建 CLI 工具并注册 10 个 CTest 目标。
 
 ## 执行命令
 
@@ -31,6 +34,11 @@
 cmake --preset tests
 cmake --build --preset tests
 ctest --preset tests --output-on-failure
+
+# 单元测试 + CLI 工具脚本
+cmake --preset full-tests
+cmake --build --preset full-tests
+ctest --preset full-tests --output-on-failure
 
 # Sanitizer 矩阵
 cmake --preset asan
@@ -72,7 +80,7 @@ RKVC_VALGRIND_HARDWARE=0 ./scripts/test-strict.sh
 - `./scripts/test-strict.sh` 全部通过。
 - 如环境安装了 Valgrind，所有 `test_*` 可执行文件必须以 `--leak-check=full --error-exitcode=1` 通过。
 - 如环境安装了 gcovr，必须归档 HTML/XML 覆盖率报告，并记录 line/branch 覆盖率。
-- 可移植包必须通过 `./scripts/test-portable.sh <package-dir>`。
+- 可移植包必须通过 `./scripts/test-portable.sh <package-dir>`；当前包内一键自测 81 项，含本机网络回环、pkg-config 编译、压缩输入误用提示和负向包结构检查。
 - RK3588 实机必须完成固定样本编码、解码、管道、长时间 soak test 和产物校验。
 - 新缺陷必须附带新的回归测试；不能复现的缺陷至少要补充契约测试或交付清单项。
 
@@ -82,7 +90,7 @@ RKVC_VALGRIND_HARDWARE=0 ./scripts/test-strict.sh
 
 - 源码：`git status --short` 只包含本次交付变更，子模块版本已锁定。
 - 构建：Debug、Release、ASan/UBSan、coverage 构建均成功。
-- 单元：`test_types`、`test_frame`、`test_contracts`、`test_internal`、`test_fault_injection`、`test_hardware` 全部通过。
+- 单元：`test_types`、`test_frame`、`test_contracts`、`test_internal`、`test_permissions`、`test_fault_injection`、`test_hardware`、`test_scale` 全部通过。
 - 异常：OOM 注入、缺失文件路径、NULL 参数、非法枚举、边界配置均覆盖。
 - 动态：Valgrind 或等价内存工具无泄漏、无越界、无未初始化读取（第三方 MPP/FFmpeg 噪声由 `scripts/mpp.supp` 屏蔽）。
 - 覆盖：覆盖率报告已归档，未覆盖区域有解释或后续任务。

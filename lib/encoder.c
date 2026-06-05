@@ -13,6 +13,13 @@
 #include <libavcodec/avcodec.h>
 #include <libavformat/avformat.h>
 
+#define RKVC_SNIFF_BYTES 512
+
+static size_t min_size(size_t a, size_t b)
+{
+    return a < b ? a : b;
+}
+
 /* ── 默认配置 ──────────────────────────────────────────────────────── */
 
 rkvc_encoder_config rkvc_encoder_config_defaults(void)
@@ -279,6 +286,22 @@ static rkvc_err encoder_open_internal(rkvc_encoder **out,
 
     rkvc_init();
 
+    /* 查找编码器 */
+    const AVCodec *codec = avcodec_find_encoder_by_name("hevc_rkmpp");
+    int using_rkmpp = (codec != NULL);
+    if (!codec) {
+        codec = avcodec_find_encoder(AV_CODEC_ID_HEVC);
+        if (!codec)
+            return RKVC_ERR_NOT_FOUND;
+        RKVC_LOG("hevc_rkmpp not found, using software: %s", codec->name);
+    }
+
+    if (using_rkmpp) {
+        err = rkvc_check_hw_permissions();
+        if (err != RKVC_OK)
+            return err;
+    }
+
     rkvc_encoder *enc = rkvc_calloc(1, sizeof(*enc));
     if (!enc)
         return RKVC_ERR_NOMEM;
@@ -287,21 +310,12 @@ static rkvc_err encoder_open_internal(rkvc_encoder **out,
     pthread_mutex_init(&enc->lock, NULL);
 
     /* 获取硬件设备上下文 */
-    err = rkvc_get_hw_device_ctx(&enc->hw_device_ctx);
-    if (err != RKVC_OK) {
-        RKVC_LOG("hw device ctx failed, falling back to software");
-        enc->hw_device_ctx = NULL;
-    }
-
-    /* 查找编码器 */
-    const AVCodec *codec = avcodec_find_encoder_by_name("hevc_rkmpp");
-    if (!codec) {
-        codec = avcodec_find_encoder(AV_CODEC_ID_HEVC);
-        if (!codec) {
-            rkvc_encoder_close(enc);
-            return RKVC_ERR_NOT_FOUND;
+    if (using_rkmpp) {
+        err = rkvc_get_hw_device_ctx(&enc->hw_device_ctx);
+        if (err != RKVC_OK) {
+            RKVC_LOG("hw device ctx failed, falling back to software");
+            enc->hw_device_ctx = NULL;
         }
-        RKVC_LOG("hevc_rkmpp not found, using software: %s", codec->name);
     }
 
     /* 创建编码器上下文 */
@@ -415,12 +429,25 @@ rkvc_err rkvc_encoder_send_frame(rkvc_encoder *enc, rkvc_frame *f)
     if (!enc || !enc->codec_ctx)
         return RKVC_ERR_INVALID;
 
-    if (enc->flushed)
-        return RKVC_ERR_EOF;
-
     AVFrame *frame = NULL;
     if (f) {
         frame = f->av_frame;
+        size_t probe_size = 0;
+        if (frame->data[0] && frame->linesize[0] > 0 &&
+            frame->height > 0)
+            probe_size = min_size((size_t)frame->linesize[0] *
+                                      (size_t)frame->height,
+                                  RKVC_SNIFF_BYTES);
+        if (probe_size > 0 &&
+            rkvc_buffer_looks_compressed_video(frame->data[0],
+                                               probe_size))
+            return RKVC_ERR_FORMAT;
+    }
+
+    if (enc->flushed)
+        return RKVC_ERR_EOF;
+
+    if (f) {
         /*
          * RKMPP 编码器要求 DMA 硬件帧 (linear / AFBC)。
          * 将软件 NV12 帧上传到硬件表面再送入编码器。
@@ -481,6 +508,13 @@ rkvc_err rkvc_encoder_send_buffer(rkvc_encoder *enc,
                                        src_linesize);
     if (err != RKVC_OK)
         return err;
+
+    size_t probe_size = min_size((size_t)src_linesize[0] *
+                                     (size_t)plane_heights[0],
+                                 RKVC_SNIFF_BYTES);
+    if (probe_size > 0 &&
+        rkvc_buffer_looks_compressed_video(data, probe_size))
+        return RKVC_ERR_FORMAT;
 
     rkvc_frame *f = NULL;
     err = rkvc_frame_alloc(&f, enc->config.width,

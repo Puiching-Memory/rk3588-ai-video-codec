@@ -26,8 +26,31 @@
 ## 设备权限
 
 运行前需要设置设备权限。如遇权限错误，请联系技术支持配置。
+程序会在启动硬件编解码前检测必要设备权限；权限不足时会返回明确的权限错误，便于部署排查。
 
 ## 快速使用
+
+### 一键自测
+
+```bash
+./test.sh
+```
+
+自测会检查二进制完整性、动态库依赖、硬件能力查询、小规模编解码流程以及本机网络回环。
+
+### 本机网络端到端测试
+
+```bash
+./network-e2e-test.sh
+```
+
+该测试会生成短测试码流，通过 `127.0.0.1` UDP 回环模拟网络传输，再由接收端解码并校验帧数。
+也可切换 RTP 或同时测试两种模式：
+
+```bash
+./network-e2e-test.sh --mode rtp
+./network-e2e-test.sh --mode both --frames 30
+```
 
 ### 硬件能力查询
 
@@ -70,6 +93,7 @@ rkvc_encode --testsrc --stdout -s 640x480 -n 30 | \
 - `stream_device_pair` — 双设备流式传输示例
 - `latency_test` — 端到端延迟测试
 - `psnr_test` — 编解码质量测试
+- `visual_compare` — SDL2 可视化质量预览（可选构建）
 
 示例程序位于 `examples/` 目录。
 

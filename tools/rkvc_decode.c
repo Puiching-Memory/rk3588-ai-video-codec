@@ -160,10 +160,9 @@ int main(int argc, char **argv) {
     if (out_fp) fclose(out_fp);
     if (use_stdout) fflush(stdout);
 
-    if (verbose)
-        fprintf(stderr, "解码完成: %d 帧, %.3fs, %.1f fps\n",
-                frame_count, elapsed,
-                elapsed > 0 ? frame_count / elapsed : 0);
+    fprintf(stderr, "解码完成: %d 帧, %.3fs, %.1f fps\n",
+            frame_count, elapsed,
+            elapsed > 0 ? frame_count / elapsed : 0);
 
     rkvc_decoder_close(dec);
     rkvc_deinit();

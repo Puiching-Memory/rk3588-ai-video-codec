@@ -203,15 +203,23 @@ ffplay -f rawvideo -pixel_format nv12 -video_size 1920x1080 decoded.nv12
 
 **用法**：
 ```bash
-./examples/bin/example_stream_device_pair -i <input.h265> -m <mode> -r <role> [-a <addr>] [-p <port>]
+./examples/bin/example_stream_device_pair -i <input.h265> -c <mode> -r <role> [--dst-ip <addr>] [--dst-port <port>]
 ```
 
 **参数说明**：
 - `-i` — 输入视频文件（发送端必需）
-- `-m` — 传输模式：`udp` 或 `rtp`
+- `-c` — 传输模式：`udp` 或 `rtp`
 - `-r` — 角色：`send`（发送）、`recv`（接收）、`both`（本地回环测试）
-- `-a` — 目标 IP 地址（发送端必需）
-- `-p` — UDP 端口（默认 5000）
+- `--dst-ip` — 目标 IP 地址（发送端必需，默认 `127.0.0.1`）
+- `--dst-port` — 目标端口（默认 `9000`）
+- `--bind-port` — 接收端绑定端口（默认 `9000`）
+
+**快速本机端到端测试**
+
+```bash
+./network-e2e-test.sh
+./network-e2e-test.sh --mode rtp --frames 30
+```
 
 **示例 1：UDP 模式双设备传输**
 
@@ -219,18 +227,18 @@ ffplay -f rawvideo -pixel_format nv12 -video_size 1920x1080 decoded.nv12
 ```bash
 ./examples/bin/example_stream_device_pair \
   -i video.h265 \
-  -m udp \
+  -c udp \
   -r send \
-  -a 192.168.1.100 \
-  -p 5000
+  --dst-ip 192.168.1.100 \
+  --dst-port 5000
 ```
 
 设备 B（接收端）：
 ```bash
 ./examples/bin/example_stream_device_pair \
-  -m udp \
+  -c udp \
   -r recv \
-  -p 5000
+  --bind-port 5000
 ```
 
 **示例 2：RTP 模式双设备传输**
@@ -239,18 +247,18 @@ ffplay -f rawvideo -pixel_format nv12 -video_size 1920x1080 decoded.nv12
 ```bash
 ./examples/bin/example_stream_device_pair \
   -i video.h265 \
-  -m rtp \
+  -c rtp \
   -r send \
-  -a 192.168.1.100 \
-  -p 5004
+  --dst-ip 192.168.1.100 \
+  --dst-port 5004
 ```
 
 设备 B（接收端）：
 ```bash
 ./examples/bin/example_stream_device_pair \
-  -m rtp \
+  -c rtp \
   -r recv \
-  -p 5004
+  --bind-port 5004
 ```
 
 **示例 3：本地回环测试**
@@ -259,10 +267,11 @@ ffplay -f rawvideo -pixel_format nv12 -video_size 1920x1080 decoded.nv12
 # 单机测试（发送和接收在同一设备）
 ./examples/bin/example_stream_device_pair \
   -i video.h265 \
-  -m udp \
+  -c udp \
   -r both \
-  -a 127.0.0.1 \
-  -p 5000
+  --dst-ip 127.0.0.1 \
+  --dst-port 5000 \
+  --bind-port 5000
 ```
 
 **应用场景**：
@@ -389,6 +398,26 @@ Minimum Frame: 39.82 dB (frame 87)
 
 ---
 
+### visual_compare - SDL2 可视化质量预览
+
+左侧显示输入原始解码帧，右侧显示重新编码并解码后的预览画面；底部实时显示码率、压缩比、延迟、稳定性和 PSNR。
+
+**用法**：
+```bash
+./examples/bin/example_visual_compare -i <input.h265> [-b bitrate] [-n count] [-l] [-f]
+```
+
+**示例**：
+```bash
+./examples/bin/example_visual_compare -i video.h265 -b 4000000 -n 300 -l
+```
+
+该示例为可选 GUI 示例，构建时需要 SDL2 development package；未检测到 SDL2 时会自动跳过，不影响其他示例。
+
+**源码位置**：`examples/visual_compare.c`
+
+---
+
 ## 编译示例程序
 
 所有示例程序源码位于 `examples/`，可以作为二次开发的参考。
@@ -400,6 +429,8 @@ export LD_LIBRARY_PATH=$PWD/lib:$LD_LIBRARY_PATH
 
 gcc -o my_encoder examples/encode_file.c $(pkg-config --cflags --libs rkvc)
 ```
+
+如果编译时给自定义程序写入了指向包内 `lib/` 的 RPATH，运行时可不设置 `LD_LIBRARY_PATH`。
 
 **运行自编译程序**：
 ```bash

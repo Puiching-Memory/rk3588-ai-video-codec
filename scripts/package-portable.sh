@@ -5,11 +5,12 @@
 #   ./scripts/package-portable.sh [--clean]
 #
 # 流程:
-#   1. 从 third_party/ffmpeg-rockchip 子模块编译 ffmpeg
-#   2. 用编译的 ffmpeg 构建 rkvc
-#   3. bundle 动态库 + RPATH 打包
+#   1. 从 third_party/mpp 子模块编译 rockchip-mpp
+#   2. 从 third_party/ffmpeg-rockchip 子模块编译 ffmpeg
+#   3. 用编译的 ffmpeg / MPP 构建 rkvc
+#   4. bundle 动态库 + RPATH 打包
 #
-# 前置依赖: gcc, make, pkg-config, patchelf, libdrm-dev
+# 前置依赖: gcc, g++, cmake, make, pkg-config, patchelf, libdrm-dev
 # 可选依赖: ninja (若已有 ninja 构建目录则自动使用)
 
 set -euo pipefail
@@ -17,7 +18,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 FFMPEG_SRC="$PROJECT_DIR/third_party/ffmpeg-rockchip"
+MPP_SRC="$PROJECT_DIR/third_party/mpp"
 FFMPEG_PREFIX="$PROJECT_DIR/build-deps/ffmpeg-install"
+MPP_BUILD="$PROJECT_DIR/build-deps/mpp-build"
+MPP_PREFIX="$PROJECT_DIR/build-deps/mpp-install"
 RKVC_BUILD="$PROJECT_DIR/build-portable"
 OUT_DIR="$PROJECT_DIR/build/portable"
 
@@ -30,7 +34,8 @@ CLEAN=0
 
 # 自动检测 CMake 生成器: 若系统有 ninja 且 build 目录用 Ninja 则使用 Ninja，否则 Unix Makefiles
 detect_generator() {
-    local cache="$RKVC_BUILD/CMakeCache.txt"
+    local build_dir="${1:-$RKVC_BUILD}"
+    local cache="$build_dir/CMakeCache.txt"
     if [[ -f "$cache" ]] && grep -q "CMAKE_MAKE_PROGRAM.*ninja" "$cache"; then
         echo "Ninja"
     elif command -v ninja &>/dev/null; then
@@ -41,7 +46,8 @@ detect_generator() {
 }
 
 detect_build_cmd() {
-    local cache="$RKVC_BUILD/CMakeCache.txt"
+    local build_dir="${1:-$RKVC_BUILD}"
+    local cache="$build_dir/CMakeCache.txt"
     if [[ -f "$cache" ]] && grep -q "CMAKE_MAKE_PROGRAM.*ninja" "$cache"; then
         echo "ninja"
     else
@@ -51,7 +57,7 @@ detect_build_cmd() {
 
 check_deps() {
     local missing=()
-    for cmd in gcc make pkg-config patchelf; do
+    for cmd in gcc g++ cmake make pkg-config patchelf; do
         command -v "$cmd" &>/dev/null || missing+=("$cmd")
     done
     if [[ ${#missing[@]} -gt 0 ]]; then
@@ -59,9 +65,42 @@ check_deps() {
         exit 1
     fi
     if [[ ! -f "$FFMPEG_SRC/configure" ]]; then
-        echo "错误: 子模块未初始化，运行: git submodule update --init --depth 1"
+        echo "错误: ffmpeg 子模块未初始化，运行: git submodule update --init --depth 1 third_party/ffmpeg-rockchip"
         exit 1
     fi
+    if [[ ! -f "$MPP_SRC/CMakeLists.txt" ]]; then
+        echo "错误: mpp 子模块未初始化，运行: git submodule update --init --depth 1 third_party/mpp"
+        exit 1
+    fi
+}
+
+build_mpp() {
+    echo "=== 构建 rockchip-mpp ==="
+
+    if [[ $CLEAN -eq 1 ]]; then
+        rm -rf "$MPP_BUILD" "$MPP_PREFIX"
+    fi
+
+    if [[ -f "$MPP_BUILD/mpp/librockchip_mpp.so" && -f "$MPP_PREFIX/lib/librockchip_mpp.so" ]]; then
+        echo "--- rockchip-mpp 已构建，跳过 (用 --clean 重建) ---"
+        return
+    fi
+
+    local gen
+    gen="$(detect_generator "$MPP_BUILD")"
+    echo "--- 使用生成器: $gen ---"
+
+    cmake -S "$MPP_SRC" -B "$MPP_BUILD" -G "$gen" \
+        -DCMAKE_BUILD_TYPE=Release \
+        -DBUILD_TEST=OFF \
+        -DCMAKE_INSTALL_PREFIX="$MPP_PREFIX"
+
+    local build_cmd
+    build_cmd="$(detect_build_cmd "$MPP_BUILD")"
+    $build_cmd -C "$MPP_BUILD"
+    $build_cmd -C "$MPP_BUILD" install
+
+    echo "--- rockchip-mpp 构建完成 ---"
 }
 
 build_ffmpeg() {
@@ -78,6 +117,9 @@ build_ffmpeg() {
 
     echo "--- 编译 ffmpeg ---"
     cd "$FFMPEG_SRC"
+
+    export PKG_CONFIG_PATH="$MPP_PREFIX/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+    export LD_LIBRARY_PATH="$MPP_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
 
     ./configure \
         --prefix="$FFMPEG_PREFIX" \
@@ -116,6 +158,7 @@ build_rkvc() {
     cmake -B "$RKVC_BUILD" -G "$gen" \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_INSTALL_RPATH_USE_LINK_PATH=ON \
+        -DMPP_BUILD_DIR="$MPP_BUILD" \
         "$PROJECT_DIR"
 
     local build_cmd
@@ -169,10 +212,28 @@ package() {
         echo "  $(basename "$lib")"
     done
 
+    echo "--- 复制 rockchip-mpp 动态库 ---"
+    for name in librockchip_mpp librockchip_vpu; do
+        local soname_link="$MPP_PREFIX/lib/${name}.so.1"
+        local real
+        if [[ -L "$soname_link" ]]; then
+            real="$(readlink -f "$soname_link")"
+        else
+            real="$(ls -1 "$MPP_PREFIX/lib/${name}.so."* 2>/dev/null | grep -v '\.so$' | sort -V | tail -1)"
+        fi
+
+        [[ -f "$real" ]] || continue
+        cp "$real" "$OUT_DIR/$PKG_NAME/lib/"
+        ln -sf "$(basename "$real")" "$OUT_DIR/$PKG_NAME/lib/${name}.so.1"
+        ln -sf "${name}.so.1" "$OUT_DIR/$PKG_NAME/lib/${name}.so"
+        echo "  $(basename "$real")"
+    done
+
     cd "$OUT_DIR/$PKG_NAME/lib"
     for real in lib*.so.*; do
         [[ -f "$real" ]] || continue
         [[ -L "$real" ]] && continue
+        [[ "$real" == librockchip_mpp.so.* || "$real" == librockchip_vpu.so.* ]] && continue
         # 标准化两级链接 (符合 Linux ld.so 惯例):
         #   libfoo.so → libfoo.so.X           (dev 链接)
         #   libfoo.so.X → libfoo.so.X.Y.Z     (SONAME 链接, ld.so 运行时使用)
@@ -207,6 +268,12 @@ package() {
         patchelf --set-rpath '$ORIGIN' "$lib" && \
             echo "  $(basename "$lib")"
     done
+    for lib in "$OUT_DIR/$PKG_NAME/lib/"librockchip*.so.*; do
+        [[ -f "$lib" ]] || continue
+        [[ -L "$lib" ]] && continue
+        patchelf --set-rpath '$ORIGIN' "$lib" && \
+            echo "  $(basename "$lib")"
+    done
 
     cp "$PROJECT_DIR"/include/rkvc/*.h "$OUT_DIR/$PKG_NAME/include/rkvc/"
     cat > "$OUT_DIR/$PKG_NAME/share/pkgconfig/rkvc.pc" <<EOF
@@ -228,35 +295,60 @@ EOF
         done
     fi
 
+    echo "--- 复制一键测试脚本 ---"
+    cp "$PROJECT_DIR/scripts/test-portable.sh" "$OUT_DIR/$PKG_NAME/test.sh"
+    chmod +x "$OUT_DIR/$PKG_NAME/test.sh"
+    echo "  test.sh"
+    cp "$PROJECT_DIR/scripts/network-e2e-test.sh" "$OUT_DIR/$PKG_NAME/network-e2e-test.sh"
+    chmod +x "$OUT_DIR/$PKG_NAME/network-e2e-test.sh"
+    echo "  network-e2e-test.sh"
+
     cd "$OUT_DIR"
     tar czf "$PKG_NAME.tar.gz" "$PKG_NAME"
     echo "  产物: $OUT_DIR/$PKG_NAME.tar.gz ($(du -h "$PKG_NAME.tar.gz" | cut -f1))"
 
     echo "--- 验证自包含库 ---"
     local unresolved=0
+    local wrong_origin=0
+    local ldd_output
+    ldd_output="$(LD_LIBRARY_PATH="$OUT_DIR/$PKG_NAME/lib" \
+        ldd "$OUT_DIR/$PKG_NAME/bin/rkvc_info" 2>&1)"
+
     while read -r line; do
         if echo "$line" | grep -q "not found"; then
             echo "  错误: $line"
             unresolved=1
         fi
-    done < <(cd "$OUT_DIR/$PKG_NAME" && LD_LIBRARY_PATH=lib ldd bin/rkvc_info 2>&1)
-    if [[ $unresolved -eq 0 ]]; then
+    done <<< "$ldd_output"
+
+    for lib in librkvc libavcodec libavformat libavutil librockchip_mpp; do
+        if echo "$ldd_output" | grep -q "$lib"; then
+            if echo "$ldd_output" | grep "$lib" | grep -vq "$OUT_DIR/$PKG_NAME/lib/"; then
+                echo "  错误: $lib 未解析到包内 lib/"
+                echo "$ldd_output" | grep "$lib" | sed 's/^/    /'
+                wrong_origin=1
+            fi
+        fi
+    done
+
+    if [[ $unresolved -eq 0 && $wrong_origin -eq 0 ]]; then
         echo "  OK: 所有依赖已解析"
     else
-        echo "  警告: 存在未解析依赖"
+        echo "  错误: 存在未解析依赖或系统库串入"
+        return 1
     fi
 
     echo "--- 目标板前置依赖 (须由系统包管理器提供) ---"
-    echo "  librockchip-mpp1  (RKMPP 硬件编解码)"
     echo "  libdrm2           (DRM 渲染)"
     echo "  librga            (Rockchip 2D 加速, 可选)"
     echo ""
-    echo "  安装示例: sudo apt install librockchip-mpp-dev libdrm-dev"
+    echo "  安装示例: sudo apt install libdrm-dev"
 }
 
 main() {
     echo "=== 可移植包构建 (rkvc $VERSION, $ARCH) ==="
     check_deps
+    build_mpp
     build_ffmpeg
     build_rkvc
     package

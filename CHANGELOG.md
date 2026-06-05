@@ -4,11 +4,71 @@
 
 ## [0.1.4] - 2026-06-05
 
+### 发布重点
+
+- 交付包从“能运行”升级为“可验证”：portable 包内新增一键自测与本机网络端到端回环，覆盖文件、依赖、RPATH、CLI、编解码、pkg-config、负向包结构和 UDP 网络链路。
+- 硬件启动前增加设备权限门控，权限不足时返回明确错误，避免落入 RKMPP/FFmpeg 初始化后的不稳定路径。
+- portable 包改为随包携带自建 rockchip-mpp 动态库，并通过 RPATH/RPATH-link 和自测防止解析到系统旧版 MPP。
+
+### 新增
+
+- **设备权限与输入格式错误码**
+  - 新增 `RKVC_ERR_PERMISSION`，用于区分设备节点权限不足与一般硬件初始化失败；`rkvc_err_str()` 返回 `device permission denied`。
+  - 新增 `RKVC_ERR_FORMAT` 和 `rkvc_probe_input_format()`，用于识别 H.264/H.265 Annex-B 与常见容器 magic，防止压缩码流被误当作原始 NV12 输入。
+
+- **硬件权限前置检测**
+  - RKMPP 编码/解码打开路径在 `avcodec_open2()` 前检查 `/dev/mpp_service` 和 MPP 实际优先使用的 DMA heap 子节点。
+  - DMA heap 预检按 rockchip-mpp 默认选择顺序检查 `system-uncached`、`system`、`system-uncached-dma32`、`system-dma32`，避免目录可读但子节点不可读时进入 MPP 崩溃路径。
+  - `rkvc_query_caps()` 现在按当前用户权限报告 MPP、DMA heap 和 RGA 能力。
+
+- **可移植包一键自测与网络回环**
+  - portable 包根目录新增 `test.sh`，可在包目录内直接执行完整验证。
+  - 新增 `network-e2e-test.sh`，自动生成测试 H.265 码流，通过 `127.0.0.1` UDP/RTP 回环模拟网络传输，再由接收端解码并校验发送/接收帧数。
+  - `scripts/test-portable.sh` 支持无参数包内运行，并把本机 UDP 网络端到端编解码回环纳入默认自测。
+
+- **SDL2 可视化质量预览示例**
+  - 新增 `examples/visual_compare.c`，并排展示输入原始帧与重新编码解码后的重建帧。
+  - 底部实时显示码率、压缩比、端到端延迟、稳定性和 Y/U/V/加权 PSNR。
+  - CMake 新增 `RKVC_BUILD_GUI_EXAMPLES` 选项；未检测到 SDL2 时自动跳过 GUI 示例，不增加核心库硬依赖。
+
+### 修复
+
+- **portable 包 MPP 运行库串入系统旧版本**
+  - `librkvc.so` 现在保留对 `librockchip_mpp.so.1` 的直接运行时依赖，避免工具链接或运行时解析到系统旧版 MPP。
+  - CMake 为库、工具、示例和测试目标加入本地依赖目录与 `rpath-link`，默认构建不再需要手动设置 `LD_LIBRARY_PATH` 才能解析 MPP 符号。
+  - 打包校验新增“关键库必须解析到包内 `lib/`”检查，防止系统库误串入。
+
+- **CLI 压缩输入误用**
+  - `rkvc_encode -i` 现在会探测输入文件头；发现 H.265/H.264/MP4/MKV 等压缩视频时直接报错并提示改用解码或转码路径。
+  - `rkvc_bench` 子测试失败时返回非 0，部署脚本和包自测可以可靠捕获失败。
+
 ### 变更
 
-- 版本号提升至 0.1.4
-- 同步开发文档、发布文档和打包文档中的版本号与 API 示例
-- 修正公共头文件注释中的编码、流式处理示例
+- **打包脚本更新** (`scripts/package-portable.sh`)
+  - 自动从 `third_party/mpp` 构建并安装 rockchip-mpp，再用该 MPP 构建 ffmpeg-rockchip 和 rkvc。
+  - 可移植包携带 `librockchip_mpp` / `librockchip_vpu` 动态库，并为这些库设置 `$ORIGIN` RPATH。
+  - 打包时复制示例程序源码/二进制、发布文档、`test.sh` 和 `network-e2e-test.sh`。
+  - 目标板前置依赖说明移除 `librockchip-mpp1`，仅保留系统 DRM/RGA 相关依赖；当前发布包大小约 2.5 MB。
+
+- **构建与测试矩阵**
+  - CMake 新增 `RKVC_BUILD_GUI_EXAMPLES`，SDL2 不存在时跳过 GUI 示例，不影响核心库、CLI 或其他示例。
+  - 新增 `full-tests` preset，在单元测试基础上构建 CLI 工具并运行脚本回归。
+  - 测试目标统一带上包内依赖路径，减少裸环境下 `LD_LIBRARY_PATH` 对测试结果的影响。
+
+- **发布文档同步**
+  - release README/USAGE/EXAMPLES 增加本机网络端到端测试命令。
+  - `stream_device_pair` 文档参数更新为当前 CLI 的 `-c`、`--dst-ip`、`--dst-port`、`--bind-port`。
+  - packaging/testing/delivery 文档同步 portable 包目录结构、MPP 动态库携带方式、RPATH 行为和当前自测覆盖范围。
+
+### 测试
+
+- 增加 `test_permissions`，通过 fake `/dev` 覆盖 `/dev/mpp_service`、MPP 默认 DMA heap、DRM fallback 和 `rkvc_query_caps()` 权限门控回归。
+- 增加 `full-tests` CMake preset，并新增 `test_cli_args`、`test_bench_permission_failure` 两个 CTest 脚本目标。
+- 增加流式 API 边界测试，覆盖统计值、重复 finish、finish 后 pull、`buffer_size` 上限等路径。
+- 增加输入格式探测回归，覆盖 H.264/H.265 Annex-B、MP4 magic，以及编码器拒绝压缩码流误作为原始 NV12 输入的 SDK/CLI 路径。
+- portable 包 `test.sh` 增加 pkg-config 最小程序编译运行、CLI 参数错误、不可执行工具、缺失/串入系统 MPP 库、绝对 RPATH 注入等负向测试。
+- `network-e2e-test.sh` 已验证 UDP 与 RTP 本机回环；portable 包 `test.sh` 默认执行 UDP 端到端回环。
+- 当前 `tests` preset 为 8 个 CTest 目标 / 68 个 CMocka 用例；`full-tests` 为 10 个 CTest 目标；portable 包自测当前 81 项全部通过。
 
 ## [0.1.3] - 2026-05-19
 

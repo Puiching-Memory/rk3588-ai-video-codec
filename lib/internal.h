@@ -62,6 +62,9 @@ rkvc_err rkvc_test_setup_encoder_codec(AVCodecContext *ctx,
 /** 获取 FFmpeg RKMPP 硬件设备上下文 (单例, 线程安全) */
 rkvc_err rkvc_get_hw_device_ctx(AVBufferRef **out);
 
+/** 检查 RKMPP 设备和至少一种 DMA-BUF allocator 当前用户是否可访问。 */
+rkvc_err rkvc_check_hw_permissions(void);
+
 /** 校验公共枚举值是否合法。 */
 int rkvc_is_valid_pix_fmt(rkvc_pix_fmt fmt);
 int rkvc_is_valid_preset(rkvc_preset preset);
@@ -73,6 +76,9 @@ enum AVPixelFormat rkvc_to_av_pix_fmt(rkvc_pix_fmt fmt);
 
 /** AVPixelFormat → rkvc_pix_fmt */
 rkvc_pix_fmt rkvc_from_av_pix_fmt(enum AVPixelFormat fmt);
+
+/** 检查数据开头是否明显为压缩视频码流或容器。 */
+int rkvc_buffer_looks_compressed_video(const uint8_t *data, size_t size);
 
 /* ── 内部帧包装 ────────────────────────────────────────────────────── */
 

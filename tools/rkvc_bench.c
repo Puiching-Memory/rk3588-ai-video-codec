@@ -352,7 +352,10 @@ static bench_result run_stream_bench(const bench_opts *opts)
 
     for (int i = 0; i < opts->frames; i++) {
         rkvc_frame *f = generate_test_frame(opts->width, opts->height, i);
-        if (!f) break;
+        if (!f) {
+            res.error = RKVC_ERR_NOMEM;
+            break;
+        }
 
         err = rkvc_encoder_send_frame(enc, f);
         rkvc_frame_unref(f);
@@ -369,14 +372,22 @@ static bench_result run_stream_bench(const bench_opts *opts)
             struct timespec ts = {0, 100000}; /* 100us */
             nanosleep(&ts, NULL);
             f = generate_test_frame(opts->width, opts->height, i);
+            if (!f) {
+                res.error = RKVC_ERR_NOMEM;
+                break;
+            }
             rkvc_frame_set_pts(f, i);
             err = rkvc_encoder_send_frame(enc, f);
             rkvc_frame_unref(f);
             retries++;
         }
 
+        if (res.error != RKVC_OK)
+            break;
+
         if (err != RKVC_OK && err != RKVC_ERR_AGAIN) {
             fprintf(stderr, "[rkvc] stream send_frame err=%d frame=%d\n", err, i);
+            res.error = err;
             break;
         }
 
@@ -491,10 +502,13 @@ int main(int argc, char **argv)
         write_tsv_header(tsv);
 
     /* 编码测试 */
+    int failed = 0;
     if (!opts.decode_only) {
         bench_result enc_res = run_encode_bench(&opts);
         print_result("encode", &enc_res, &opts);
         if (tsv) write_tsv_row(tsv, "encode", &enc_res, &opts);
+        if (enc_res.error != RKVC_OK)
+            failed = 1;
     }
 
     /* 解码测试 */
@@ -502,6 +516,8 @@ int main(int argc, char **argv)
         bench_result dec_res = run_decode_bench(&opts);
         print_result("decode", &dec_res, &opts);
         if (tsv) write_tsv_row(tsv, "decode", &dec_res, &opts);
+        if (dec_res.error != RKVC_OK)
+            failed = 1;
     }
 
     /* 流式测试 */
@@ -509,6 +525,8 @@ int main(int argc, char **argv)
         bench_result strm_res = run_stream_bench(&opts);
         print_result("stream_enc", &strm_res, &opts);
         if (tsv) write_tsv_row(tsv, "stream_enc", &strm_res, &opts);
+        if (strm_res.error != RKVC_OK)
+            failed = 1;
     }
 
     if (tsv) {
@@ -517,5 +535,5 @@ int main(int argc, char **argv)
     }
 
     rkvc_deinit();
-    return 0;
+    return failed ? 1 : 0;
 }

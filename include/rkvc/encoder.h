@@ -84,6 +84,7 @@ rkvc_err rkvc_encoder_open_file(rkvc_encoder **out,
  *
  * @param f  帧句柄 (NV12 或配置指定格式)。编码器会在需要时引用输入帧；
  *           调用方仍需释放自己的 rkvc_frame 引用。
+ * @retval RKVC_ERR_FORMAT  输入看起来是 H.264/H.265 或常见容器，而不是原始像素帧。
  *
  * 送入 NULL 表示 flush (等价于后面调用 rkvc_encoder_drain)。
  */
@@ -93,6 +94,7 @@ rkvc_err rkvc_encoder_send_frame(rkvc_encoder *enc, rkvc_frame *f);
  * @brief 送入原始像素缓冲区（零拷贝快捷接口）。
  *
  * 适用于不想分配 rkvc_frame 的场景。内部自动创建临时帧。
+ * @retval RKVC_ERR_FORMAT  输入看起来是 H.264/H.265 或常见容器，而不是原始像素缓冲区。
  */
 rkvc_err rkvc_encoder_send_buffer(rkvc_encoder *enc,
                                   const uint8_t *data, int linesize,

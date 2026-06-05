@@ -69,6 +69,7 @@ static rkvc_err decoder_open_internal(rkvc_decoder **out,
 
     /* 查找解码器 */
     const AVCodec *codec = avcodec_find_decoder_by_name("hevc_rkmpp");
+    int using_rkmpp = (codec != NULL);
     if (!codec) {
         codec = avcodec_find_decoder(AV_CODEC_ID_HEVC);
         if (!codec) {
@@ -144,6 +145,14 @@ static rkvc_err decoder_open_internal(rkvc_decoder **out,
         dec->codec_ctx->thread_count = cfg->threads;
     else
         dec->codec_ctx->thread_count = 1; /* RKMPP 单线程 */
+
+    if (using_rkmpp) {
+        err = rkvc_check_hw_permissions();
+        if (err != RKVC_OK) {
+            rkvc_decoder_close(dec);
+            return err;
+        }
+    }
 
     /* 打开解码器 */
     int ret = avcodec_open2(dec->codec_ctx, codec, NULL);

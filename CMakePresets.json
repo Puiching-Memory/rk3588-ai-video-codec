@@ -1,6 +1,6 @@
 {
     "version": 3,
-    "cmakeMinimumRequired": { "major": 3, "minor": 16, "patch": 0 },
+    "cmakeMinimumRequired": { "major": 3, "minor": 21, "patch": 0 },
     "configurePresets": [
         {
             "name": "default",
@@ -43,7 +43,8 @@
                 "RKVC_BUILD_TOOLS": "OFF",
                 "RKVC_BUILD_TESTS": "ON",
                 "RKVC_ENABLE_FAULT_INJECTION": "ON",
-                "RKVC_INSTALL": "OFF"
+                "RKVC_INSTALL": "OFF",
+                "MPP_BUILD_DIR": "${sourceDir}/build-deps/mpp-build"
             }
         },
         {
@@ -54,6 +55,15 @@
             "cacheVariables": {
                 "RKVC_ENABLE_ASAN": "ON",
                 "RKVC_ENABLE_UBSAN": "ON"
+            }
+        },
+        {
+            "name": "full-tests",
+            "displayName": "Unit Tests + CLI Tools",
+            "inherits": "tests",
+            "binaryDir": "${sourceDir}/build-full-tests",
+            "cacheVariables": {
+                "RKVC_BUILD_TOOLS": "ON"
             }
         },
         {
@@ -83,6 +93,11 @@
             "targets": ["check"]
         },
         {
+            "name": "full-tests",
+            "configurePreset": "full-tests",
+            "targets": ["check"]
+        },
+        {
             "name": "coverage",
             "configurePreset": "coverage",
             "targets": ["check"]
@@ -109,6 +124,13 @@
         {
             "name": "asan",
             "configurePreset": "asan",
+            "output": {
+                "outputOnFailure": true
+            }
+        },
+        {
+            "name": "full-tests",
+            "configurePreset": "full-tests",
             "output": {
                 "outputOnFailure": true
             }

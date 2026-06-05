@@ -22,6 +22,8 @@ static void test_averror_mapping(void **state)
     assert_int_equal(rkvc_from_averror(AVERROR(EINVAL)), RKVC_ERR_INVALID);
     assert_int_equal(rkvc_from_averror(AVERROR(ENOENT)), RKVC_ERR_NOT_FOUND);
     assert_int_equal(rkvc_from_averror(AVERROR(EIO)), RKVC_ERR_IO);
+    assert_int_equal(rkvc_from_averror(AVERROR(EACCES)), RKVC_ERR_PERMISSION);
+    assert_int_equal(rkvc_from_averror(AVERROR(EPERM)), RKVC_ERR_PERMISSION);
     assert_int_equal(rkvc_from_averror(AVERROR(ENODEV)), RKVC_ERR_HW);
     assert_int_equal(rkvc_from_averror(AVERROR(EAGAIN)), RKVC_ERR_AGAIN);
     assert_int_equal(rkvc_from_averror(AVERROR_EOF), RKVC_ERR_EOF);
@@ -268,6 +270,37 @@ static void test_encoder_send_buffer_rejects_bad_linesize(void **state)
     assert_int_equal(rkvc_encoder_close(encoder), RKVC_OK);
 }
 
+static void test_encoder_rejects_compressed_video_payload(void **state)
+{
+    (void)state;
+
+    uint8_t data[128] = {0};
+    rkvc_encoder *encoder = make_fake_encoder(RKVC_PIX_FMT_NV12);
+    rkvc_frame *frame = NULL;
+    uint8_t *planes[4] = {0};
+    int strides[4] = {0};
+    const uint8_t h265[] = {
+        0x00, 0x00, 0x00, 0x01, 0x40, 0x01,
+        0x0c, 0x01, 0xff, 0xff,
+        0x00, 0x00, 0x01, 0x42, 0x01
+    };
+
+    memcpy(data, h265, sizeof(h265));
+    assert_int_equal(rkvc_encoder_send_buffer(encoder, data, 8, 0),
+                     RKVC_ERR_FORMAT);
+    assert_int_equal(rkvc_encoder_close(encoder), RKVC_OK);
+
+    encoder = make_fake_encoder(RKVC_PIX_FMT_NV12);
+    assert_int_equal(rkvc_frame_alloc(&frame, 8, 4, RKVC_PIX_FMT_NV12),
+                     RKVC_OK);
+    assert_int_equal(rkvc_frame_get_data(frame, planes, strides), RKVC_OK);
+    memcpy(planes[0], h265, sizeof(h265));
+    assert_int_equal(rkvc_encoder_send_frame(encoder, frame),
+                     RKVC_ERR_FORMAT);
+    rkvc_frame_unref(frame);
+    assert_int_equal(rkvc_encoder_close(encoder), RKVC_OK);
+}
+
 static void test_encoder_fake_active_error_paths(void **state)
 {
     (void)state;
@@ -384,6 +417,47 @@ static void test_stream_fake_stats_and_paths(void **state)
     assert_int_equal(rkvc_stream_close(stream), RKVC_OK);
 }
 
+static void test_stream_fake_boundary_states(void **state)
+{
+    (void)state;
+
+    rkvc_packet pkt = {0};
+    rkvc_stream_stats stats;
+    rkvc_stream *stream = make_fake_stream(RKVC_STREAM_ENCODE);
+
+    stream->stats.frames_in = 2;
+    stream->stats.frames_out = 1;
+    stream->stats.frames_dropped = 3;
+    assert_int_equal(rkvc_stream_get_stats(stream, &stats), RKVC_OK);
+    assert_int_equal(stats.frames_in, 2);
+    assert_int_equal(stats.frames_out, 1);
+    assert_int_equal(stats.frames_dropped, 3);
+    assert_true(stats.avg_fps == 0.0);
+
+    stream->first_out_time = av_gettime_relative() + 1000000;
+    stream->stats.frames_out = 4;
+    assert_int_equal(rkvc_stream_get_stats(stream, &stats), RKVC_OK);
+    assert_true(stats.avg_fps == 0.0);
+
+    stream->finished = 1;
+    assert_int_equal(rkvc_stream_pull(stream, &pkt, -1), RKVC_ERR_INVALID);
+    assert_int_equal(rkvc_stream_finish(stream), RKVC_OK);
+    assert_int_equal(rkvc_stream_finish(stream), RKVC_OK);
+    assert_int_equal(rkvc_stream_close(stream), RKVC_OK);
+}
+
+static void test_stream_open_rejects_buffer_overflow_config(void **state)
+{
+    (void)state;
+
+    rkvc_stream *stream = (rkvc_stream *)(uintptr_t)0x1;
+    rkvc_stream_config cfg = rkvc_stream_config_defaults();
+
+    cfg.buffer_size = RKVC_STREAM_BUF_MAX + 1;
+    assert_int_equal(rkvc_stream_open(&stream, &cfg), RKVC_ERR_INVALID);
+    assert_null(stream);
+}
+
 int main(void)
 {
     const struct CMUnitTest tests[] = {
@@ -397,9 +471,12 @@ int main(void)
 #endif
         cmocka_unit_test(test_encoder_send_buffer_layouts),
         cmocka_unit_test(test_encoder_send_buffer_rejects_bad_linesize),
+        cmocka_unit_test(test_encoder_rejects_compressed_video_payload),
         cmocka_unit_test(test_encoder_fake_active_error_paths),
         cmocka_unit_test(test_decoder_fake_getters_and_flushed_paths),
         cmocka_unit_test(test_stream_fake_stats_and_paths),
+        cmocka_unit_test(test_stream_fake_boundary_states),
+        cmocka_unit_test(test_stream_open_rejects_buffer_overflow_config),
     };
 
     return cmocka_run_group_tests(tests, NULL, NULL);

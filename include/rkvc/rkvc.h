@@ -95,12 +95,29 @@ void rkvc_deinit(void);
 const char *rkvc_err_str(rkvc_err err);
 
 /**
+ * @brief 输入数据格式探测结果。
+ */
+typedef enum {
+    RKVC_INPUT_UNKNOWN = 0,     /**< 未知或未能可靠识别 */
+    RKVC_INPUT_RAW_VIDEO,       /**< 原始视频像素数据 */
+    RKVC_INPUT_COMPRESSED_VIDEO,/**< H.264/H.265 或常见视频容器 */
+} rkvc_input_format_probe;
+
+/**
+ * @brief 基于文件头探测输入数据类型。
+ *
+ * 该函数不会解析完整码流，只识别明确的 magic / start code。
+ */
+rkvc_input_format_probe rkvc_probe_input_format(const uint8_t *data,
+                                                size_t size);
+
+/**
  * @brief 运行时能力查询。
  */
 typedef struct {
     int has_rkmpp_enc;   /**< RKMPP 编码器可用 */
     int has_rkmpp_dec;   /**< RKMPP 解码器可用 */
-    int has_dma_heap;    /**< /dev/dma_heap 可访问 */
+    int has_dma_heap;    /**< /dev/dma_heap/* 可由当前用户访问 */
     int has_rga;         /**< RGA 2D 加速可用 */
     int max_width;       /**< 硬件支持的最大宽度 */
     int max_height;      /**< 硬件支持的最大高度 */

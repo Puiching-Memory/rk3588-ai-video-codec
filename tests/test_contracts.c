@@ -34,6 +34,8 @@ static void assert_stream_invalid(rkvc_stream_config cfg)
 static void test_err_str_unknown_code(void **state)
 {
     (void)state;
+    assert_string_equal(rkvc_err_str(RKVC_ERR_PERMISSION),
+                        "device permission denied");
     assert_string_equal(rkvc_err_str((rkvc_err)12345), "unknown error");
 }
 

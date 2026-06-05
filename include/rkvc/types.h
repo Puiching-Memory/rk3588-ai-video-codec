@@ -25,6 +25,8 @@ typedef enum {
     RKVC_ERR_AGAIN       = -7,  /**< 需要更多输入或输出缓冲区满 */
     RKVC_ERR_MUX         = -8,  /**< 封装器错误 */
     RKVC_ERR_INTERNAL    = -9,  /**< 内部 FFmpeg 错误 */
+    RKVC_ERR_PERMISSION  = -10, /**< 设备节点权限不足 */
+    RKVC_ERR_FORMAT      = -11, /**< 输入数据格式不匹配 */
 } rkvc_err;
 
 /* ── 像素格式 ─────────────────────────────────────────────────────── */
