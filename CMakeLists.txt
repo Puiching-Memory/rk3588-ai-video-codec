@@ -1,8 +1,18 @@
 cmake_minimum_required(VERSION 3.16)
 project(rkvc
-    VERSION 0.1.4
+    VERSION 0.1.5
     DESCRIPTION "RK3588 H.265 Video Codec Library (RKMPP)"
     LANGUAGES C
+)
+
+# ── 版本号（全项目唯一来源：project(VERSION)）──────────────────────
+# 源码通过下面的编译定义消费版本号，任何 .c/.h 中不得再硬编码版本。
+# RKVC_VERSION_NUM: major<<16 | minor<<8 | patch，与 rkvc_version_number() 对齐。
+math(EXPR RKVC_VERSION_NUM
+    "${PROJECT_VERSION_MAJOR} * 65536 + ${PROJECT_VERSION_MINOR} * 256 + ${PROJECT_VERSION_PATCH}")
+set(RKVC_VERSION_COMPILE_DEFS
+    RKVC_VERSION_STR="${PROJECT_VERSION}"
+    RKVC_VERSION_NUM=${RKVC_VERSION_NUM}
 )
 
 set(CMAKE_C_STANDARD 11)
@@ -137,6 +147,8 @@ if(RKVC_BUILD_SHARED)
         SOVERSION   0
         POSITION_INDEPENDENT_CODE ON
     )
+    # 版本号由 project(VERSION) 注入，init.c 不再硬编码
+    target_compile_definitions(rkvc_shared PRIVATE ${RKVC_VERSION_COMPILE_DEFS})
     # soname alias
     add_library(rkvc::shared ALIAS rkvc_shared)
 endif()
@@ -156,6 +168,8 @@ if(RKVC_BUILD_STATIC)
     target_link_options(rkvc_static INTERFACE ${RKVC_RPATH_LINK_OPTIONS})
     target_link_libraries(rkvc_static PUBLIC rkvc_instrumentation ${FFMPEG_LIBS} ${EXTRA_LIBS})
     set_target_properties(rkvc_static PROPERTIES OUTPUT_NAME rkvc)
+    # 版本号由 project(VERSION) 注入，init.c 不再硬编码
+    target_compile_definitions(rkvc_static PRIVATE ${RKVC_VERSION_COMPILE_DEFS})
     add_library(rkvc::static ALIAS rkvc_static)
 endif()
 

@@ -49,6 +49,58 @@ static int to_rga_format(int fmt)
     }
 }
 
+/*
+ * RGA's wrapbuffer_virtualaddr_t() takes a single base pointer and computes
+ * subsequent plane offsets as `wstride * hstride * <plane_factor>`. If the
+ * source AVFrame's planes have any extra padding between them (which is the
+ * case for buffers from av_frame_get_buffer() and for the sw frame produced
+ * by av_hwframe_transfer_data), RGA reads/writes UV at the wrong address.
+ *
+ * Returns 1 if the frame's planes are laid out exactly back-to-back so that
+ * `wrapbuffer_virtualaddr_t(data[0], w, h, linesize[0], h, fmt)` reads/writes
+ * the correct UV (and V, for I420) addresses.
+ */
+static int frame_is_contiguous_for_rga(const AVFrame *f)
+{
+    if (!f || !f->data[0])
+        return 0;
+
+    int w = f->linesize[0];
+    int h = f->height;
+
+    switch (f->format) {
+    case AV_PIX_FMT_NV12:
+    case AV_PIX_FMT_NV21:
+    case AV_PIX_FMT_NV16: {
+        if (!f->data[1])
+            return 0;
+        return (f->data[1] == f->data[0] + (ptrdiff_t)w * h)
+            && (f->linesize[1] == w);
+    }
+    case AV_PIX_FMT_YUV420P: {
+        if (!f->data[1] || !f->data[2])
+            return 0;
+        ptrdiff_t y_size = (ptrdiff_t)w * h;
+        ptrdiff_t u_size = (ptrdiff_t)(w / 2) * (h / 2);
+        return (f->data[1] == f->data[0] + y_size)
+            && (f->data[2] == f->data[1] + u_size)
+            && (f->linesize[1] == w / 2)
+            && (f->linesize[2] == w / 2);
+    }
+    case AV_PIX_FMT_P010LE:
+    case AV_PIX_FMT_P010BE: {
+        if (!f->data[1])
+            return 0;
+        return (f->data[1] == f->data[0] + (ptrdiff_t)w * h)
+            && (f->linesize[1] == w);
+    }
+    default:
+        /* Conservative: treat unknown formats as contiguous-only when
+         * they have a single plane. */
+        return f->data[1] == NULL;
+    }
+}
+
 /* ── 帧缩放 ─────────────────────────────────────────────────────── */
 
 rkvc_err rkvc_frame_scale(const rkvc_frame *src, rkvc_frame **out,
@@ -78,19 +130,47 @@ rkvc_err rkvc_frame_scale(const rkvc_frame *src, rkvc_frame **out,
                             ? (rkvc_pix_fmt)cfg->dst_format
                             : src->info.format;
 
-    /* 构造 RGA 源 buffer */
+    /*
+     * If the source frame's planes are not laid out back-to-back (e.g. it
+     * came from av_hwframe_transfer_data + av_frame_get_buffer's default
+     * padding, or from a caller using ffmpeg directly), copy it into a
+     * contiguous temporary frame so RGA's plane-offset arithmetic stays
+     * valid. Frames produced by rkvc_frame_alloc / rkvc_decoder always
+     * pass the contiguous check and skip this copy.
+     */
+    rkvc_frame *src_owned = NULL;
+    const AVFrame *src_av = src->av_frame;
+
+    if (!frame_is_contiguous_for_rga(src_av)) {
+        rkvc_err cerr = rkvc_frame_alloc(&src_owned, src_w, src_h,
+                                         src->info.format);
+        if (cerr != RKVC_OK)
+            return cerr;
+
+        av_image_copy(src_owned->av_frame->data,
+                      src_owned->av_frame->linesize,
+                      (const uint8_t **)src_av->data,
+                      src_av->linesize,
+                      (enum AVPixelFormat)src_av->format,
+                      src_w, src_h);
+
+        src_av = src_owned->av_frame;
+    }
+
     int rga_src_fmt = to_rga_format(src->info.format);
     rga_buffer_t rga_src = wrapbuffer_virtualaddr_t(
-        src->av_frame->data[0],
+        src_av->data[0],
         src_w, src_h,
-        src->av_frame->linesize[0], src_h,
+        src_av->linesize[0], src_h,
         rga_src_fmt);
 
-    /* 分配目标帧 */
+    /* 分配目标帧 (contiguous, 适配 RGA 的偏移假设) */
     rkvc_frame *dst = NULL;
     rkvc_err err = rkvc_frame_alloc(&dst, dst_w, dst_h, dst_fmt);
-    if (err != RKVC_OK)
+    if (err != RKVC_OK) {
+        rkvc_frame_unref(src_owned);
         return err;
+    }
 
     /* 构造 RGA 目标 buffer */
     int rga_dst_fmt = to_rga_format(dst_fmt);
@@ -105,12 +185,15 @@ rkvc_err rkvc_frame_scale(const rkvc_frame *src, rkvc_frame **out,
     if (ret != IM_STATUS_SUCCESS) {
         RKVC_LOG("RGA imresize failed: %s", imStrError(ret));
         rkvc_frame_unref(dst);
+        rkvc_frame_unref(src_owned);
         return RKVC_ERR_HW;
     }
 
     /* 保留源帧的 PTS */
     dst->av_frame->pts = src->av_frame->pts;
     dst->info.pts = src->info.pts;
+
+    rkvc_frame_unref(src_owned);
 
     *out = dst;
     return RKVC_OK;

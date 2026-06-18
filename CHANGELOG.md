@@ -2,6 +2,35 @@
 
 本文档记录 rkvc 各版本的主要变更。
 
+## [0.1.5] - 2026-06-18
+
+### 发布重点
+
+- 修复 `rkvc_frame_scale()` 在 1920×1080 NV12 帧底部产生 16 行纯绿色带的硬件错位 bug，根因是 ffmpeg `av_frame_get_buffer()` 与 RGA `wrapbuffer_virtualaddr_t()` 对 UV 平面偏移的假设不一致。
+- 凡是高度不是 32 倍数的帧（典型如 1080p）经过 `rkvc_frame_scale` 都会受影响；修复后帧底字节级与输入一致，PSNR 从 24.27 dB 提升至 ∞（同分辨率缩放），全部图像内容完整保留。
+- 新增 3 个回归测试钉住该问题，反向验证：移除修复后 3 个用例立即失败并精确定位错误位置。
+
+### 修复
+
+- **`rkvc_frame_scale` 帧底绿色带 (UV 错位)**
+  - 根因：ffmpeg `av_frame_get_buffer(0)` 会按 32 行高度对齐 + 每平面 16 字节 padding，对 1920×1080 NV12 实际产生 `data[1] = data[0] + linesize[0]*1088 + 32` 的布局（Y 与 UV 之间存在 15392 字节 gap）。RGA `wrapbuffer_virtualaddr_t()` 用单一基址 + `wstride*hstride` 推算 UV 地址，没有字段表达这个 gap，导致 RGA 把 UV 写到错误偏移；最终在帧底 16 luma 行处 UV=(0,0) 显示为纯绿色。
+  - 修复：`rkvc_frame_alloc()` 不再调用 `av_frame_get_buffer()`，改为 `av_image_get_buffer_size + av_buffer_alloc + av_image_fill_arrays(align=1)` 自行分配严格连续的像素缓冲，让 RGA 的偏移算式与实际内存严格一致。受影响调用方包括 `examples/transcode.c`、`lib/stream.c` 自动缩放路径。
+  - 兼容性：对外仍是连续布局的 `AVFrame`，`rkvc_frame_get_data()` 行为不变；不需要修改任何调用者代码。
+  - 性能：fast path 零损失（实测 7.23 ms / 1080p NV12 RGA scale 不变）；如果调用方传入的源帧带 ffmpeg padding（例如直接来自 `av_hwframe_transfer_data`），`rkvc_frame_scale` 会先做一次 `av_image_copy`（约 0.4 ms / 1080p）再喂 RGA，保证正确性。
+
+### 测试
+
+- **回归测试**
+  - 新增 `test_frame_alloc_contiguous_layout`：纯 CPU 校验 `rkvc_frame_alloc` 输出的 NV12/YUV420P 帧 `data[1] == data[0] + linesize[0]*H`，覆盖 1080p / 480p / 720p / 1440p。
+  - 新增 `test_scale_identity_byte_exact_nv12_1080p`：1920×1080 NV12 经 `rkvc_frame_scale` 同分辨率缩放后必须与输入逐字节一致；用线性同余生成的随机 UV 内容，避免常数色块掩盖错位；额外检查帧底 16 行不存在 UV=(0,0) 全零行。
+  - 新增 `test_scale_identity_byte_exact_yuv420p_1080p`：同上但用三平面 I420，覆盖 V 平面同样的偏移问题。
+  - 反向验证：临时撤销修复，仅这 3 个新用例失败并报告具体错误位置（如 `[UV] mismatch row 531 col 1888: got=0 ref=41`），其余 11 个用例继续通过。
+
+### 内部
+
+- 新增 `rkvc_avframe_alloc_contiguous(AVFrame*)` 内部 helper，封装"严格连续无 padding"的 ffmpeg 帧缓冲分配。
+- 新增 `frame_is_contiguous_for_rga(AVFrame*)` 检查，识别外部传入帧是否安全直接喂 RGA，覆盖 NV12/NV21/NV16/YUV420P/P010。
+
 ## [0.1.4] - 2026-06-05
 
 ### 发布重点

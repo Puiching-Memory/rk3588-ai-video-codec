@@ -10,8 +10,11 @@
 #include <pthread.h>
 #include <unistd.h>
 
-#define RKVC_VERSION_STR "0.1.4"
-#define RKVC_VERSION_NUM 0x000104
+/*
+ * 版本号统一由 CMake 的 project(VERSION) 生成，通过 target_compile_definitions
+ * 注入为 RKVC_VERSION_STR / RKVC_VERSION_NUM。脱离 CMake 构建将直接编译失败，
+ * 强制所有编译路径都走 CMake，避免版本号出现第二个来源。
+ */
 
 static pthread_once_t s_init_once = PTHREAD_ONCE_INIT;
 static int s_initialized = 0;

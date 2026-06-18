@@ -5,6 +5,49 @@
 
 #include "internal.h"
 
+/* ── 内部: 连续 AVFrame 像素缓冲分配 ─────────────────────────────────
+ *
+ * 不使用 av_frame_get_buffer()。后者会按 32 行高度对齐 + 每平面 16 字节
+ * padding，把 UV 推到 (data[0] + linesize[0]*align_up(H, 32) + 32)。RGA 的
+ * wrapbuffer_virtualaddr_t() 只取一个基址、按 wstride*hstride 推算 UV，没
+ * 有字段表达 ffmpeg 的 gap——结果就是 1080p NV12 缩放后帧底 16 行变绿。
+ *
+ * 这里用 av_image_get_buffer_size + av_image_fill_arrays(align=1) 强制平面
+ * 紧贴，让 RGA 的偏移算式与实际内存严格一致。
+ */
+rkvc_err rkvc_avframe_alloc_contiguous(AVFrame *av_frame)
+{
+    if (!av_frame || av_frame->width <= 0 || av_frame->height <= 0)
+        return RKVC_ERR_INVALID;
+
+    enum AVPixelFormat av_fmt = (enum AVPixelFormat)av_frame->format;
+    if (av_fmt == AV_PIX_FMT_NONE)
+        return RKVC_ERR_INVALID;
+
+    int buf_size = av_image_get_buffer_size(av_fmt,
+                                            av_frame->width,
+                                            av_frame->height, 1);
+    if (buf_size < 0)
+        return rkvc_from_averror(buf_size);
+
+    AVBufferRef *buf = av_buffer_alloc(buf_size);
+    if (!buf)
+        return RKVC_ERR_NOMEM;
+
+    int ret = av_image_fill_arrays(av_frame->data, av_frame->linesize,
+                                   buf->data, av_fmt,
+                                   av_frame->width, av_frame->height, 1);
+    if (ret < 0) {
+        av_buffer_unref(&buf);
+        return rkvc_from_averror(ret);
+    }
+
+    av_frame->buf[0] = buf;
+    /* extended_data must point at data[] for plain (non-extended) layouts. */
+    av_frame->extended_data = av_frame->data;
+    return RKVC_OK;
+}
+
 rkvc_err rkvc_frame_alloc(rkvc_frame **out, int width, int height,
                           rkvc_pix_fmt format)
 {
@@ -30,11 +73,11 @@ rkvc_err rkvc_frame_alloc(rkvc_frame **out, int width, int height,
     f->av_frame->height = height;
     f->av_frame->format = rkvc_to_av_pix_fmt(format);
 
-    int ret = av_frame_get_buffer(f->av_frame, 0);
-    if (ret < 0) {
+    rkvc_err err = rkvc_avframe_alloc_contiguous(f->av_frame);
+    if (err != RKVC_OK) {
         av_frame_free(&f->av_frame);
         rkvc_free(f);
-        return rkvc_from_averror(ret);
+        return err;
     }
 
     f->ref_count = 1;

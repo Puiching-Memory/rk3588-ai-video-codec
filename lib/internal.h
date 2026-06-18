@@ -91,6 +91,19 @@ struct rkvc_frame {
 
 rkvc_frame *rkvc_frame_wrap_avframe(AVFrame *av_frame);
 
+/**
+ * @brief 给 av_frame 装上一块连续 (无 inter-plane padding) 的像素缓冲。
+ *
+ * 与 av_frame_get_buffer() 不同——后者会按 32 行高度对齐 + 每平面 16 字节
+ * padding，导致 RGA 的 wrapbuffer_virtualaddr_t 推算 UV 偏移时错位 (帧底
+ * 绿带 bug)。此函数始终输出真正连续的布局，让 RGA 的偏移算式与实际内存
+ * 完全匹配。
+ *
+ * 调用前 av_frame->{width,height,format} 必须已设置；此函数填写
+ * data/linesize/buf[0]/extended_data。
+ */
+rkvc_err rkvc_avframe_alloc_contiguous(AVFrame *av_frame);
+
 /* ── 内部编码器 ────────────────────────────────────────────────────── */
 
 struct rkvc_encoder {
