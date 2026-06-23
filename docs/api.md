@@ -75,6 +75,21 @@ rkvc_encoder_close(enc);
 
 ## 解码器
 
+### 输出像素格式
+
+`rkvc_decoder_config.output_format` 控制解码输出帧的像素格式，支持
+`RKVC_PIX_FMT_NV12` / `YUV420P` / `NV16` / `P010`。
+
+RKMPP 硬件对输出格式的支持受输入码流类型约束（8-bit HEVC 仅能直接输出
+NV12，10-bit 仅能输出 NV15 等）。当请求的格式硬件无法直接提供时，解码器
+内部自动通过 libswscale 进行软件像素格式转换，保证交付帧的格式严格等于
+配置值。NV12 走硬件直出无额外开销；其它格式引入一次软件转换的 CPU 开销。
+
+```c
+rkvc_decoder_config cfg = rkvc_decoder_config_defaults();
+cfg.output_format = RKVC_PIX_FMT_YUV420P;  // 请求 YUV420P 输出
+```
+
 ### 离线文件解码
 
 ```c

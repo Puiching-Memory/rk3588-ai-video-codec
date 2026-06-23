@@ -70,6 +70,36 @@ ffplay -f rawvideo -pixel_format nv12 -video_size 1920x1080 decoded.nv12
 
 ---
 
+### decode_formats - 解码输出格式验证
+
+演示 `rkvc_decoder_config.output_format` 的实际生效行为。编码一段测试 H.265 流，再分别以 NV12 / YUV420P / NV16 / P010 作为 `output_format` 解码，逐帧打印实际格式并与配置比对。
+
+**用法**：
+```bash
+./examples/bin/example_decode_formats
+```
+
+**示例输出**：
+```
+=== 以 NV12 格式解码 ===
+  帧 0: format=NV12 (期望 NV12) ✓
+  ...
+=== 以 YUV420P 格式解码 ===
+  帧 0: format=YUV420P (期望 YUV420P) ✓
+  ...
+=== 总结 ===
+所有格式输出正确: 是 ✓
+```
+
+**说明**：
+- NV12 走硬件直出，零额外开销。
+- YUV420P / NV16 / P010 在硬件帧池不支持时由 `libswscale` 软件像素格式转换补齐，交付帧格式保证等于 `output_format` 配置值。
+- 本示例对应 v0.1.6 修复的「输出格式静默失效」回归问题。
+
+**源码位置**：`examples/decode_formats.c`
+
+---
+
 ## 流式处理
 
 ### stream_encode - 流式编码

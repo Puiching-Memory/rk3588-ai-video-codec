@@ -12,7 +12,7 @@ rkvc_info
 
 输出示例：
 ```
-rkvc version: 0.1.4
+rkvc version: 0.1.6
 Hardware encoder: available
 Hardware decoder: available
 Hardware scaler: available
@@ -104,6 +104,11 @@ rkvc_bench
 **解码文件**：
 ```bash
 ./examples/bin/example_decode_file input.h265 -o output.nv12
+```
+
+**解码输出格式验证**（验证 NV12/YUV420P/NV16/P010 输出格式生效）：
+```bash
+./examples/bin/example_decode_formats
 ```
 
 ### 流式处理

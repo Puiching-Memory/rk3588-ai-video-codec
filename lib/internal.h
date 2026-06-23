@@ -18,6 +18,7 @@
 #include <libavutil/opt.h>
 #include <libavutil/pixdesc.h>
 #include <libavutil/time.h>
+#include <libswscale/swscale.h>
 
 /*
  * AV_PIX_FMT_RKMPP — 项目内部别名，映射到 DRM PRIME 像素格式。
@@ -130,6 +131,14 @@ struct rkvc_decoder {
     int               flushed;
     int               video_stream_idx;
     pthread_mutex_t   lock;
+
+    /* sws_scale 上下文缓存: 避免每帧 sws_getContext/freeContext。
+     * 仅当源格式/尺寸/目标格式不变时复用, 否则重建。 */
+    struct SwsContext *sws_cache;
+    int               sws_src_w;
+    int               sws_src_h;
+    int               sws_src_fmt;     /* enum AVPixelFormat */
+    int               sws_dst_fmt;     /* enum AVPixelFormat */
 };
 
 /* ── 内部流 ─────────────────────────────────────────────────────────── */

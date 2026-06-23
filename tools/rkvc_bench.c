@@ -16,6 +16,8 @@
  *   --quick            快速模式 (120 帧)
  *   --encode-only      仅测试编码
  *   --decode-only      仅测试解码
+ *   --decode-format F  解码格式: NV12 YUV420P NV16 P010
+ *   --decode-formats   跑全部 4 种解码格式并对比
  *   --stream           测试流式 API
  *   -o, --output DIR   结果输出目录
  *   -v, --verbose      详细输出
@@ -43,6 +45,8 @@ typedef struct {
     int  decode_only;
     int  test_stream;
     int  verbose;
+    int  all_decode_formats;        /* --decode-formats: 跑全部 4 种格式 */
+    rkvc_pix_fmt decode_format;     /* --decode-format: 单一格式 */
     char output_dir[256];
 } bench_opts;
 
@@ -53,22 +57,26 @@ static bench_opts parse_args(int argc, char **argv)
         .frames = 300, .bitrate = 4000000,
         .encode_only = 0, .decode_only = 0,
         .test_stream = 0, .verbose = 0,
+        .all_decode_formats = 0,
+        .decode_format = RKVC_PIX_FMT_NV12,
         .output_dir = "bench_results",
     };
 
     static struct option long_opts[] = {
-        {"size",      required_argument, 0, 's'},
-        {"rate",      required_argument, 0, 'r'},
-        {"frames",    required_argument, 0, 'n'},
-        {"bitrate",   required_argument, 0, 'b'},
-        {"4k",        no_argument,       0, '4'},
-        {"quick",     no_argument,       0, 'q'},
-        {"encode-only", no_argument,     0, 'E'},
-        {"decode-only", no_argument,     0, 'D'},
-        {"stream",    no_argument,       0, 'S'},
-        {"output",    required_argument, 0, 'o'},
-        {"verbose",   no_argument,       0, 'v'},
-        {"help",      no_argument,       0, 'h'},
+        {"size",            required_argument, 0, 's'},
+        {"rate",            required_argument, 0, 'r'},
+        {"frames",          required_argument, 0, 'n'},
+        {"bitrate",         required_argument, 0, 'b'},
+        {"4k",              no_argument,       0, '4'},
+        {"quick",           no_argument,       0, 'q'},
+        {"encode-only",     no_argument,       0, 'E'},
+        {"decode-only",     no_argument,       0, 'D'},
+        {"stream",          no_argument,       0, 'S'},
+        {"output",          required_argument, 0, 'o'},
+        {"verbose",         no_argument,       0, 'v'},
+        {"decode-format",   required_argument, 0, 'F'},
+        {"decode-formats",  no_argument,       0, 'A'},
+        {"help",            no_argument,       0, 'h'},
         {0, 0, 0, 0}
     };
 
@@ -91,6 +99,23 @@ static bench_opts parse_args(int argc, char **argv)
         case 'o':
             strncpy(opts.output_dir, optarg, sizeof(opts.output_dir) - 1);
             break;
+        case 'F': {
+            const char *s = optarg;
+            if (!strcmp(s, "nv12") || !strcmp(s, "NV12"))
+                opts.decode_format = RKVC_PIX_FMT_NV12;
+            else if (!strcmp(s, "yuv420p") || !strcmp(s, "YUV420P"))
+                opts.decode_format = RKVC_PIX_FMT_YUV420P;
+            else if (!strcmp(s, "nv16") || !strcmp(s, "NV16"))
+                opts.decode_format = RKVC_PIX_FMT_NV16;
+            else if (!strcmp(s, "p010") || !strcmp(s, "P010"))
+                opts.decode_format = RKVC_PIX_FMT_P010;
+            else {
+                fprintf(stderr, "未知格式: %s\n", s);
+                exit(1);
+            }
+            break;
+        }
+        case 'A': opts.all_decode_formats = 1; break;
         case 'v': opts.verbose = 1; break;
         case 'h':
             printf("rkvc_bench — RK3588 VPU 基准测试\n"
@@ -103,6 +128,8 @@ static bench_opts parse_args(int argc, char **argv)
                    "  --quick     快速模式 (120 帧)\n"
                    "  --encode-only  仅编码\n"
                    "  --decode-only  仅解码\n"
+                   "  --decode-format F  解码格式: NV12 YUV420P NV16 P010\n"
+                   "  --decode-formats   跑全部 4 种解码格式并对比\n"
                    "  --stream    测试流式 API\n"
                    "  -o DIR      输出目录\n"
                    "  -v          详细\n");
@@ -251,15 +278,18 @@ static bench_result run_encode_bench(const bench_opts *opts)
 
 /* ── 解码吞吐测试 ─────────────────────────────────────────────────── */
 
-static bench_result run_decode_bench(const bench_opts *opts)
+static bench_result run_decode_bench(const bench_opts *opts,
+                                     rkvc_pix_fmt decode_fmt)
 {
     bench_result res = {0};
     rkvc_err err;
 
-    /* 先编码一个测试文件 */
+    /* 先编码一个测试文件 (若已存在则复用, 避免 --decode-formats 时重复编码) */
     char encpath[512];
     snprintf(encpath, sizeof(encpath), "%s/bench_dec_src.h265", opts->output_dir);
 
+    struct stat enc_st;
+    if (stat(encpath, &enc_st) != 0) {
     {
         rkvc_encoder_config cfg = rkvc_encoder_config_defaults();
         cfg.width   = opts->width;
@@ -287,10 +317,12 @@ static bench_result run_decode_bench(const bench_opts *opts)
         while (rkvc_encoder_receive_packet(enc, &pkt) == RKVC_OK) {}
         rkvc_encoder_close(enc);
     }
+    }
 
     /* 解码测试 */
     rkvc_decoder *dec = NULL;
     rkvc_decoder_config dcfg = rkvc_decoder_config_defaults();
+    dcfg.output_format = decode_fmt;
     err = rkvc_decoder_open_file(&dec, &dcfg, encpath);
     if (err != RKVC_OK) {
         res.error = err;
@@ -513,11 +545,35 @@ int main(int argc, char **argv)
 
     /* 解码测试 */
     if (!opts.encode_only) {
-        bench_result dec_res = run_decode_bench(&opts);
-        print_result("decode", &dec_res, &opts);
-        if (tsv) write_tsv_row(tsv, "decode", &dec_res, &opts);
-        if (dec_res.error != RKVC_OK)
-            failed = 1;
+        if (opts.all_decode_formats) {
+            rkvc_pix_fmt fmts[] = {
+                RKVC_PIX_FMT_NV12,
+                RKVC_PIX_FMT_YUV420P,
+                RKVC_PIX_FMT_NV16,
+                RKVC_PIX_FMT_P010,
+            };
+            const char *names[] = {"NV12", "YUV420P", "NV16", "P010"};
+            for (size_t i = 0; i < sizeof(fmts)/sizeof(fmts[0]); i++) {
+                char label[32];
+                snprintf(label, sizeof(label), "decode_%s", names[i]);
+                bench_result dec_res = run_decode_bench(&opts, fmts[i]);
+                print_result(label, &dec_res, &opts);
+                if (tsv) write_tsv_row(tsv, label, &dec_res, &opts);
+                if (dec_res.error != RKVC_OK)
+                    failed = 1;
+                /* 迭代间让 VPU 释放资源, 避免连续创建/销毁 MPP 上下文导致崩溃 */
+                if (i + 1 < sizeof(fmts)/sizeof(fmts[0])) {
+                    struct timespec ts = {0, 300000000}; /* 300ms */
+                    nanosleep(&ts, NULL);
+                }
+            }
+        } else {
+            bench_result dec_res = run_decode_bench(&opts, opts.decode_format);
+            print_result("decode", &dec_res, &opts);
+            if (tsv) write_tsv_row(tsv, "decode", &dec_res, &opts);
+            if (dec_res.error != RKVC_OK)
+                failed = 1;
+        }
     }
 
     /* 流式测试 */

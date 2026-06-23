@@ -86,6 +86,7 @@ rkvc_encode --testsrc --stdout -s 640x480 -n 30 | \
 
 - `encode_file` — 文件编码示例
 - `decode_file` — 文件解码示例
+- `decode_formats` — 解码输出格式验证示例（NV12/YUV420P/NV16/P010）
 - `stream_encode` — 流式编码示例
 - `stream_decode` — 流式解码示例
 - `transcode` — 转码示例

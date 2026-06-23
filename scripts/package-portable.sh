@@ -128,7 +128,7 @@ build_ffmpeg() {
         --enable-pic \
         --enable-static --enable-shared \
         --disable-doc --disable-programs --disable-network \
-        --disable-swscale --disable-swresample \
+        --enable-swscale --disable-swresample \
         --disable-x86asm \
         --disable-everything \
         --enable-encoder=hevc_rkmpp \
@@ -201,8 +201,9 @@ package() {
     # 符号链接由下方统一循环创建
 
     echo "--- 复制 ffmpeg 动态库 (仅限 rkvc 依赖) ---"
-    # rkvc 只依赖 libavcodec / libavformat / libavutil
-    for name in libavcodec libavformat libavutil; do
+    # rkvc 依赖 libavcodec / libavformat / libavutil / libswscale
+    # (libswscale 用于解码器在硬件无法直接输出请求格式时的软件像素格式转换)
+    for name in libavcodec libavformat libavutil libswscale; do
         # 取最大版本号的真实文件
         local lib
         lib="$(ls -1 "$FFMPEG_PREFIX/lib/${name}.so."* 2>/dev/null | grep -v '\.so$' | sort -V | tail -1)"
@@ -261,8 +262,8 @@ package() {
         patchelf --set-rpath '$ORIGIN' "$rkvc_so" && \
             echo "  $(basename "$rkvc_so")"
     fi
-    # ffmpeg 自身库之间也有依赖 (avcodec → avutil)
-    for lib in "$OUT_DIR/$PKG_NAME/lib/"libav*.so.*; do
+    # ffmpeg 自身库之间也有依赖 (avcodec → avutil, swscale → avutil)
+    for lib in "$OUT_DIR/$PKG_NAME/lib/"libav*.so.* "$OUT_DIR/$PKG_NAME/lib/"libswscale.so.*; do
         [[ -f "$lib" ]] || continue
         [[ -L "$lib" ]] && continue
         patchelf --set-rpath '$ORIGIN' "$lib" && \
@@ -321,7 +322,7 @@ EOF
         fi
     done <<< "$ldd_output"
 
-    for lib in librkvc libavcodec libavformat libavutil librockchip_mpp; do
+    for lib in librkvc libavcodec libavformat libavutil libswscale librockchip_mpp; do
         if echo "$ldd_output" | grep -q "$lib"; then
             if echo "$ldd_output" | grep "$lib" | grep -vq "$OUT_DIR/$PKG_NAME/lib/"; then
                 echo "  错误: $lib 未解析到包内 lib/"

@@ -29,9 +29,10 @@ rkvc-0.1.4-linux-aarch64-portable/
 │   ├── libavcodec.so.60     # ffmpeg-rockchip
 │   ├── libavformat.so.60
 │   ├── libavutil.so.58
+│   ├── libswscale.so.7      # 解码器像素格式软转换 (NV12→YUV420P/NV16/P010)
 │   ├── librockchip_mpp.so.1 # rockchip-mpp
 │   ├── librockchip_vpu.so.1
-│   └── ...                  # 不再携带 swscale/swresample 等未使用库
+│   └── ...                  # 不携带 swresample 等未使用库
 ├── include/rkvc/            # 开发头文件
 ├── share/pkgconfig/rkvc.pc  # pkg-config
 ├── test.sh                  # 一键自测脚本

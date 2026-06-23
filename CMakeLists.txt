@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.16)
 project(rkvc
-    VERSION 0.1.5
+    VERSION 0.1.6
     DESCRIPTION "RK3588 H.265 Video Codec Library (RKMPP)"
     LANGUAGES C
 )
@@ -41,6 +41,7 @@ set(AVCODEC_LIB_DIRS
     "${CMAKE_SOURCE_DIR}/third_party/ffmpeg-rockchip/libavcodec"
     "${CMAKE_SOURCE_DIR}/third_party/ffmpeg-rockchip/libavformat"
     "${CMAKE_SOURCE_DIR}/third_party/ffmpeg-rockchip/libavutil"
+    "${CMAKE_SOURCE_DIR}/third_party/ffmpeg-rockchip/libswscale"
 )
 
 # ── MPP (rockchip mpp) ───────────────────────────────────────────────
@@ -60,8 +61,10 @@ foreach(RKVC_DEP_LIB_DIR IN LISTS RKVC_DEP_LIB_DIRS)
 endforeach()
 
 # ── 源文件 ─────────────────────────────────────────────────────────────
-# FFmpeg 静态库存在循环依赖，需要用 --start-group/--end-group 包裹
-set(FFMPEG_LIBS -Wl,--start-group avcodec avformat avutil -Wl,--end-group)
+# FFmpeg 静态库存在循环依赖，需要用 --start-group/--end-group 包裹。
+# libswscale 用于解码器在硬件无法直接输出请求格式时的软件像素格式转换
+# (例如 8-bit HEVC 流硬件只能下载为 NV12，需 sws_scale 转 YUV420P/NV16/P010)。
+set(FFMPEG_LIBS -Wl,--start-group avcodec avformat avutil swscale -Wl,--end-group)
 # 外部依赖：MPP、zlib、drm
 set(EXTRA_LIBS
     -Wl,--no-as-needed
@@ -184,7 +187,7 @@ endif()
 if(RKVC_BUILD_EXAMPLES)
     set(EXAMPLE_TARGETS "")
 
-    foreach(EXAMPLE encode_file decode_file stream_encode stream_decode stream_transcode stream_device_pair transcode latency_test psnr_test)
+    foreach(EXAMPLE encode_file decode_file decode_formats stream_encode stream_decode stream_transcode stream_device_pair transcode latency_test psnr_test)
         if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/examples/${EXAMPLE}.c")
             add_executable(example_${EXAMPLE} examples/${EXAMPLE}.c)
             target_link_libraries(example_${EXAMPLE} PRIVATE rkvc)

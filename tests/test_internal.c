@@ -458,6 +458,41 @@ static void test_stream_open_rejects_buffer_overflow_config(void **state)
     assert_null(stream);
 }
 
+static void test_frame_wrap_preserves_non_nv12_formats(void **state)
+{
+    (void)state;
+
+    /* 回归保护: wrap_avframe 必须按 AVFrame->format 翻译出正确的
+     * rkvc_pix_fmt。decoder.c 的硬件帧下载依赖这条链路把用户配置的
+     * output_format 传回到 rkvc_frame_info.format。 */
+    struct {
+        enum AVPixelFormat av;
+        rkvc_pix_fmt       expected;
+    } cases[] = {
+        { AV_PIX_FMT_NV12,    RKVC_PIX_FMT_NV12    },
+        { AV_PIX_FMT_YUV420P, RKVC_PIX_FMT_YUV420P },
+        { AV_PIX_FMT_NV16,    RKVC_PIX_FMT_NV16    },
+        { AV_PIX_FMT_P010,    RKVC_PIX_FMT_P010    },
+    };
+
+    for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
+        AVFrame *av_frame = av_frame_alloc();
+        assert_non_null(av_frame);
+        av_frame->width  = 16;
+        av_frame->height = 8;
+        av_frame->format = cases[i].av;
+
+        rkvc_frame *frame = rkvc_frame_wrap_avframe(av_frame);
+        assert_non_null(frame);
+
+        rkvc_frame_info info;
+        assert_int_equal(rkvc_frame_get_info(frame, &info), RKVC_OK);
+        assert_int_equal(info.format, cases[i].expected);
+
+        rkvc_frame_unref(frame);
+    }
+}
+
 int main(void)
 {
     const struct CMUnitTest tests[] = {
@@ -465,6 +500,7 @@ int main(void)
         cmocka_unit_test(test_enum_validators),
         cmocka_unit_test(test_pixel_format_round_trip),
         cmocka_unit_test(test_frame_wrap_contracts),
+        cmocka_unit_test(test_frame_wrap_preserves_non_nv12_formats),
         cmocka_unit_test(test_encoder_fake_getters_and_flushed_paths),
 #ifdef RKVC_ENABLE_FAULT_INJECTION
         cmocka_unit_test(test_encoder_pure_helper_paths),

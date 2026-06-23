@@ -119,6 +119,36 @@ static void test_frame_alloc_zero(void **state) {
     assert_null(f);
 }
 
+static void test_init_returns_ok(void **state) {
+    (void)state;
+    /* 首次初始化应成功 */
+    assert_int_equal(rkvc_init(), RKVC_OK);
+}
+
+static void test_init_is_idempotent(void **state) {
+    (void)state;
+    /* 文档声明线程安全、可多次调用 —— 多次 init 必须全部成功且不崩溃 */
+    assert_int_equal(rkvc_init(), RKVC_OK);
+    assert_int_equal(rkvc_init(), RKVC_OK);
+    assert_int_equal(rkvc_init(), RKVC_OK);
+}
+
+static void test_deinit_is_safe_without_init(void **state) {
+    (void)state;
+    /* deinit 即使未配对 init 也必须不崩溃 */
+    rkvc_deinit();
+    rkvc_deinit();
+}
+
+static void test_init_deinit_pair(void **state) {
+    (void)state;
+    /* init → deinit → init 循环必须可重复 */
+    assert_int_equal(rkvc_init(), RKVC_OK);
+    rkvc_deinit();
+    assert_int_equal(rkvc_init(), RKVC_OK);
+    rkvc_deinit();
+}
+
 int main(void) {
     const struct CMUnitTest tests[] = {
         cmocka_unit_test(test_version_string_not_null),
@@ -132,6 +162,10 @@ int main(void) {
         cmocka_unit_test(test_encoder_open_null),
         cmocka_unit_test(test_decoder_open_null),
         cmocka_unit_test(test_frame_alloc_zero),
+        cmocka_unit_test(test_init_returns_ok),
+        cmocka_unit_test(test_init_is_idempotent),
+        cmocka_unit_test(test_deinit_is_safe_without_init),
+        cmocka_unit_test(test_init_deinit_pair),
     };
     return cmocka_run_group_tests(tests, NULL, NULL);
 }

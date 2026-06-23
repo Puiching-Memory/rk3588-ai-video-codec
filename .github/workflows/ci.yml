@@ -85,7 +85,7 @@ jobs:
           ./configure --enable-pic --enable-version3 --disable-everything \
             --disable-doc --disable-programs \
             --disable-avdevice --disable-avfilter --disable-postproc \
-            --disable-swscale --disable-swresample --disable-network \
+            --enable-swscale --disable-swresample --disable-network \
             --enable-rkmpp --enable-libdrm \
             --enable-encoder=hevc_rkmpp \
             --enable-decoder=hevc_rkmpp --enable-decoder=hevc \
@@ -155,7 +155,7 @@ jobs:
           ./configure --enable-pic --enable-version3 --disable-everything \
             --disable-doc --disable-programs \
             --disable-avdevice --disable-avfilter --disable-postproc \
-            --disable-swscale --disable-swresample --disable-network \
+            --enable-swscale --disable-swresample --disable-network \
             --enable-rkmpp --enable-libdrm \
             --enable-encoder=hevc_rkmpp \
             --enable-decoder=hevc_rkmpp --enable-decoder=hevc \

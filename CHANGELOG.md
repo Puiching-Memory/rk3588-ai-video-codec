@@ -2,6 +2,50 @@
 
 本文档记录 rkvc 各版本的主要变更。
 
+## [0.1.6] - 2026-06-23
+
+### 发布重点
+
+- 修复 `rkvc_decoder_config.output_format` 配置失效 bug：配置 YUV420P / NV16 / P010 等非 NV12 格式后，`rkvc_frame_get_info` 返回的格式始终为 NV12。
+- 重新构建 `ffmpeg-rockchip` 启用 `libswscale`，解码器对硬件无法直接输出的格式通过软件像素格式转换实现，保证交付帧格式严格等于配置值。
+- 新增 `decode_formats` 示例程序，用同一 H.265 流分别以 NV12 / YUV420P / NV16 / P010 解码并逐帧打印实际格式，作为本次修复的可运行验证。
+- 补齐此前仅 fake-context / 错误路径覆盖的 API 真实硬件功能性测试。
+
+### 修复
+
+- **`rkvc_decoder_receive_frame` 输出格式失效**
+  - 根因：RKMPP 硬件帧池对输出格式的支持受输入码流类型严格约束（8-bit HEVC 仅能直接输出 NV12，10-bit 仅能输出 NV15 等）。原实现未显式指定下载目标格式，FFmpeg 回退到硬件帧池默认 sw_format（NV12）；且工程构建 `ffmpeg-rockchip` 时用了 `--disable-swscale`，软件格式转换链路缺失。两者叠加导致非 NV12 配置静默失效。
+  - 修复：解码器先尝试让硬件直接输出请求格式；若硬件帧池不支持（transfer 失败或静默回退），下载到硬件默认格式后调用 libswscale 软转换为请求格式。最终交付帧格式保证等于 `cfg.output_format`。
+  - 兼容性：NV12 走硬件直出无额外开销；非 NV12 格式引入一次软件转换的 CPU 开销，属合理代价。调用方无需修改代码。
+  - 影响：解码器、可移植包库均需重新链接 `libswscale.so.7`。
+
+### 新增
+
+- **`examples/decode_formats.c` 示例**
+  - 编码一段 320×240 测试 H.265 流，再分别以 NV12 / YUV420P / NV16 / P010 作为 `output_format` 解码，逐帧打印 `info.format` 并与配置比对。
+  - 真机运行四种格式全部 `✓`，对应 `examples/decode_formats.c`；已纳入 `CMakeLists.txt` 示例列表与可移植包 `examples/bin`、`examples/src`。
+
+### 变更
+
+- `third_party/ffmpeg-rockchip` 重新配置：`--disable-swscale` → `--enable-swscale`，`libswscale.a` / `libswscale.so.7` 已生成。
+- `CMakeLists.txt`：`FFMPEG_LIBS` 加入 `swscale`，`AVCODEC_LIB_DIRS` 加入 `libswscale` 路径；示例列表加入 `decode_formats`。
+- `lib/internal.h`：新增 `#include <libswscale/swscale.h>`。
+- `scripts/package-portable.sh`：可移植包库复制列表与 RPATH 循环加入 `libswscale`；自包含校验列表加入 `libswscale`。
+- `.github/workflows/ci.yml`：test 与 package 两个 job 的 ffmpeg 构建参数改为 `--enable-swscale`。
+- 发布文档同步：`docs/release/README.md` 示例列表加入 `decode_formats`；`docs/release/EXAMPLES.md` 新增 decode_formats 章节；`docs/release/USAGE.md` 修正版本示例输出 `0.1.4 → 0.1.6` 并补充 decode_formats 用法。
+
+### 测试
+
+- **新增回归测试**
+  - `test_hardware.c::test_decoder_output_format_is_respected`：编码短 8-bit HEVC 流，以 NV12 / YUV420P / NV16 / P010 分别解码，校验每一帧 `info.format` 与配置完全一致。所有格式现在都必须成功（NV12 走硬件，其余走 sws_scale）。
+  - `test_internal.c::test_frame_wrap_preserves_non_nv12_formats`：无硬件依赖，验证 `rkvc_frame_wrap_avframe` 对 NV12/YUV420P/NV16/P010 都能正确翻译 `AVFrame->format` → `rkvc_frame_info.format`。
+- **补齐此前仅 fake-context / 错误路径覆盖的 API 真实硬件功能性测试**
+  - `test_types.c`：新增 `rkvc_init` / `rkvc_deinit` 的幂等性、未配对安全、init↔deinit 循环测试（此前完全无覆盖）。
+  - `test_hardware.c::test_encoder_no_file_mode_and_send_buffer`：编码器无文件模式 + `send_buffer` 零拷贝接口 + `drain` + `timebase` + `get_config` 真实值验证（此前仅 NULL 错误路径 / fake-context）。
+  - `test_hardware.c::test_decoder_callback_mode_and_drain`：解码器文件模式下 `get_video_info` / `get_duration` 真实值验证 + `drain` 真实硬件路径（此前仅 fake-context）。
+- CMocka 用例总数从 68 增至 80，全部通过。
+- **可移植包完整测试**：重建 `rkvc-0.1.6-linux-aarch64-portable.tar.gz`（含新增 `example_decode_formats` 与更新后的发布文档），`test.sh` 自测通过 84 项 / 0 失败；全新目录解压后自测同样 84 项全过；`network-e2e-test.sh` UDP 与 RTP 双模式本机回环均通过；`example_decode_formats` 真机运行四种输出格式全部 `✓`。
+
 ## [0.1.5] - 2026-06-18
 
 ### 发布重点

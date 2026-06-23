@@ -290,7 +290,27 @@ rkvc_err rkvc_decoder_receive_frame(rkvc_decoder *dec, rkvc_frame **f)
         return rkvc_from_averror(ret);
     }
 
-    /* 如果是硬件帧，下载到软件 */
+    /* 处理硬件帧下载与输出格式转换。
+     *
+     * RKMPP 解码器有两种交付路径:
+     *   1. AV_PIX_FMT_DRM_PRIME  —— 交付硬件帧, 需 av_hwframe_transfer_data
+     *      下载到软件。
+     *   2. 其他 (NV12/NV16/NV24/...) —— 解码器内部已完成 transfer, 直接
+     *      交付软件帧 (RKMPP 在 ff_get_format 选择了软件 pix_fmt)。
+     *
+     * RKMPP 硬件帧池只支持与输入码流匹配的有限格式集 (8-bit HEVC→NV12,
+     * 10-bit→NV15, 4:2:2 仅 H.264→NV16 等)。若用户请求的 output_format
+     * 硬件无法直接提供, 历史上会静默回退到池默认格式 (通常 NV12), 造成
+     * "配置失效"的隐蔽 bug。
+     *
+     * 修复策略: 先尝试让硬件直接输出请求格式 (设置 sw_frame->format 后
+     * transfer); 若硬件不支持或静默回退到其它格式, 则用 libswscale 把
+     * 实际下载到的软件帧软转换为请求格式。最终交付的帧格式必须等于
+     * cfg.output_format, 否则返回 RKVC_ERR_FORMAT (绝不静默错配)。
+     */
+    enum AVPixelFormat requested_av =
+        rkvc_to_av_pix_fmt(dec->config.output_format);
+
     if (frame->format == AV_PIX_FMT_RKMPP) {
         AVFrame *sw_frame = av_frame_alloc();
         if (!sw_frame) {
@@ -298,15 +318,87 @@ rkvc_err rkvc_decoder_receive_frame(rkvc_decoder *dec, rkvc_frame **f)
             return RKVC_ERR_NOMEM;
         }
 
+        sw_frame->format = requested_av;
         ret = av_hwframe_transfer_data(sw_frame, frame, 0);
+
+        if (ret < 0) {
+            /* 请求格式硬件帧池不支持 —— 下载到默认格式后走 sws_scale。 */
+            av_frame_free(&sw_frame);
+            sw_frame = av_frame_alloc();
+            if (!sw_frame) {
+                av_frame_free(&frame);
+                return RKVC_ERR_NOMEM;
+            }
+            ret = av_hwframe_transfer_data(sw_frame, frame, 0);
+        }
         av_frame_free(&frame);
 
         if (ret < 0) {
             av_frame_free(&sw_frame);
             return rkvc_from_averror(ret);
         }
-
         frame = sw_frame;
+    }
+
+    /* 此时 frame 为软件帧, 但格式可能不等于请求格式 (硬件回退或解码器
+     * 直接交付了 NV12)。用 libswscale 做格式转换。
+     * 优化: 复用缓存的 SwsContext, 避免每帧 sws_getContext/freeContext
+     * (这是纯 CPU 软转换的性能关键路径, 上下文创建开销很大)。 */
+    if (frame->format != requested_av) {
+        /* 检查是否可复用缓存的 sws 上下文 (源格式/尺寸/目标格式不变) */
+        if (dec->sws_cache &&
+            (dec->sws_src_w != frame->width ||
+             dec->sws_src_h != frame->height ||
+             dec->sws_src_fmt != frame->format ||
+             dec->sws_dst_fmt != requested_av)) {
+            sws_freeContext(dec->sws_cache);
+            dec->sws_cache = NULL;
+        }
+
+        if (!dec->sws_cache) {
+            dec->sws_cache = sws_getContext(
+                frame->width, frame->height, frame->format,
+                frame->width, frame->height, requested_av,
+                SWS_BILINEAR, NULL, NULL, NULL);
+            if (!dec->sws_cache) {
+                av_frame_free(&frame);
+                return RKVC_ERR_FORMAT;
+            }
+            dec->sws_src_w   = frame->width;
+            dec->sws_src_h   = frame->height;
+            dec->sws_src_fmt = frame->format;
+            dec->sws_dst_fmt = requested_av;
+        }
+
+        AVFrame *dst = av_frame_alloc();
+        if (!dst) {
+            av_frame_free(&frame);
+            return RKVC_ERR_NOMEM;
+        }
+        dst->width  = frame->width;
+        dst->height = frame->height;
+        dst->format = requested_av;
+        dst->pts    = frame->pts;
+        dst->flags  = frame->flags;
+
+        ret = av_frame_get_buffer(dst, 0);
+        if (ret < 0) {
+            av_frame_free(&dst);
+            av_frame_free(&frame);
+            return rkvc_from_averror(ret);
+        }
+
+        ret = sws_scale(dec->sws_cache,
+                        (const uint8_t *const *)frame->data,
+                        frame->linesize, 0, frame->height,
+                        dst->data, dst->linesize);
+        av_frame_free(&frame);
+
+        if (ret <= 0) {
+            av_frame_free(&dst);
+            return RKVC_ERR_FORMAT;
+        }
+        frame = dst;
     }
 
     /* 包装成 rkvc_frame */
@@ -345,6 +437,10 @@ rkvc_err rkvc_decoder_close(rkvc_decoder *dec)
     if (!dec)
         return RKVC_OK;
 
+    if (dec->sws_cache) {
+        sws_freeContext(dec->sws_cache);
+        dec->sws_cache = NULL;
+    }
     if (dec->pkt)
         av_packet_free(&dec->pkt);
     if (dec->codec_ctx)

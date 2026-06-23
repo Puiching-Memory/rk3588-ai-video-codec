@@ -15,17 +15,17 @@
 | 层级       | 目标                                                                 | 说明                                                                                       |
 | ---------- | -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------ |
 | 基础契约   | `tests/test_types.c`, `tests/test_frame.c`, `tests/test_contracts.c` | 版本、错误码、帧生命周期、公共 API 参数校验、I/O 缺失路径                                  |
-| 内部一致性 | `tests/test_internal.c`                                              | FFmpeg 错误码映射、枚举校验、像素格式转换、内部帧包装、流式 API 边界状态                   |
+| 内部一致性 | `tests/test_internal.c`                                              | FFmpeg 错误码映射、枚举校验、像素格式转换、内部帧包装（含非 NV12 格式保留回归）、流式 API 边界状态                   |
 | 权限门控   | `tests/test_permissions.c`                                           | fake `/dev` 覆盖 MPP service、默认 DMA heap、DRM fallback 和能力查询权限回归               |
 | 异常注入   | `tests/test_fault_injection.c`                                       | `RKVC_ENABLE_FAULT_INJECTION` 下确定性模拟项目自有分配 OOM                                 |
-| 硬件集成   | `tests/test_hardware.c`                                              | 自动探测 RKMPP 设备；可用时执行 H.265 硬件编码/解码文件往返，不可用时 CTest skip           |
+| 硬件集成   | `tests/test_hardware.c`                                              | 自动探测 RKMPP 设备；可用时执行 H.265 硬件编码/解码文件往返、解码器输出格式回归 (NV12/YUV420P/NV16/P010)、编码器无文件模式与 `send_buffer` 零拷贝接口、解码器回调模式与 drain/get_video_info/get_duration 真实值验证，不可用时 CTest skip |
 | 工具脚本   | `tests/test_cli_args.sh`, `tests/test_bench_permission_failure.sh`   | `full-tests` 下覆盖 CLI 参数错误和 bench 权限失败传播                                      |
 | 可移植包   | `scripts/test-portable.sh`                                           | 包完整性、依赖/RPATH、编解码、本机网络回环、pkg-config 最小编译、CLI 和包结构负向测试      |
 | 动态分析   | `asan` preset                                                        | AddressSanitizer + UndefinedBehaviorSanitizer；当前环境下 LSan 关闭，泄漏检查交给 Valgrind |
 | 覆盖率     | `coverage` preset                                                    | 用 gcov instrumentation 重新编译并执行同一测试集                                           |
 | 严格门禁   | `scripts/test-strict.sh`                                             | 顺序执行 `tests`、`asan`、`coverage`，有 Valgrind/gcovr 时自动附加报告                     |
 
-`RKVC_ENABLE_FAULT_INJECTION` 默认关闭，只在测试 preset 中启用，交付库不会暴露测试钩子。当前 `tests` preset 注册 8 个 CTest 目标，包含 68 个 CMocka 用例；`full-tests` 额外构建 CLI 工具并注册 10 个 CTest 目标。
+`RKVC_ENABLE_FAULT_INJECTION` 默认关闭，只在测试 preset 中启用，交付库不会暴露测试钩子。当前 `tests` preset 注册 8 个 CTest 目标，包含 80 个 CMocka 用例；`full-tests` 额外构建 CLI 工具并注册 10 个 CTest 目标。
 
 ## 执行命令
 
