@@ -1,10 +1,9 @@
 #!/bin/bash
-# network-e2e-test.sh - 本机网络端到端编解码回环测试
+# network-e2e-test.sh - v2 可移植包网络相关冒烟测试
 #
-# 流程:
-#   1. rkvc_encode --testsrc 生成短 H.265 输入
-#   2. example_stream_device_pair 在 127.0.0.1 上模拟发送端/接收端
-#   3. 接收端解码并校验发送/接收帧数一致
+# v2 的 LiveCapture / UDP-RTP 回环尚在接入中；当前脚本验证：
+#   1. 可生成短测试码流
+#   2. stream_device_pair 示例可加载并输出 v2 占位信息
 
 set -euo pipefail
 
@@ -27,18 +26,12 @@ usage() {
   ./network-e2e-test.sh <portable-package-dir> [选项]
 
 选项:
-  -m, --mode udp|rtp|both   网络模式 (默认 udp)
   -s, --size WxH            测试分辨率 (默认 640x480)
   -n, --frames N            测试帧数 (默认 10)
-  -b, --bitrate BPS         传输码率 (默认 1000000)
-  -p, --port N              本机 UDP/RTP 端口 (默认 19000 + PID)
+  -b, --bitrate BPS         编码码率 (默认 1000000)
   -t, --timeout SEC         单步超时时间 (默认 30)
   --keep-tmp                保留临时目录
   -h, --help                显示帮助
-
-示例:
-  ./network-e2e-test.sh
-  ./network-e2e-test.sh --mode rtp --size 1280x720 --frames 30
 EOF
 }
 
@@ -87,12 +80,12 @@ run_with_timeout() {
 }
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=portable-test-helpers.sh
+source "$SCRIPT_DIR/portable-test-helpers.sh"
 
-MODE="${RKVC_NET_MODE:-udp}"
 SIZE="${RKVC_NET_SIZE:-640x480}"
 FRAMES="${RKVC_NET_FRAMES:-10}"
 BITRATE="${RKVC_NET_BITRATE:-1000000}"
-PORT="${RKVC_NET_PORT:-$((19000 + ($$ % 10000)))}"
 TIMEOUT="${RKVC_NET_TIMEOUT:-30}"
 KEEP_TMP="${RKVC_NET_KEEP_TMP:-0}"
 
@@ -109,9 +102,6 @@ fi
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        -m|--mode)
-            if [[ -z "${2:-}" ]]; then echo "错误: $1 需要参数"; exit 2; fi
-            MODE="$2"; shift 2 ;;
         -s|--size)
             if [[ -z "${2:-}" ]]; then echo "错误: $1 需要参数"; exit 2; fi
             SIZE="$2"; shift 2 ;;
@@ -121,9 +111,6 @@ while [[ $# -gt 0 ]]; do
         -b|--bitrate)
             if [[ -z "${2:-}" ]]; then echo "错误: $1 需要参数"; exit 2; fi
             BITRATE="$2"; shift 2 ;;
-        -p|--port)
-            if [[ -z "${2:-}" ]]; then echo "错误: $1 需要参数"; exit 2; fi
-            PORT="$2"; shift 2 ;;
         -t|--timeout)
             if [[ -z "${2:-}" ]]; then echo "错误: $1 需要参数"; exit 2; fi
             TIMEOUT="$2"; shift 2 ;;
@@ -138,16 +125,11 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-case "$MODE" in
-    udp|rtp|both) ;;
-    *) echo "错误: --mode 仅支持 udp、rtp 或 both"; exit 2 ;;
-esac
-
 if [[ ! "$SIZE" =~ ^[0-9]+x[0-9]+$ ]]; then
     echo "错误: --size 必须是 WxH，例如 640x480"
     exit 2
 fi
-for value_name in FRAMES BITRATE PORT TIMEOUT; do
+for value_name in FRAMES BITRATE TIMEOUT; do
     value="${!value_name}"
     if [[ ! "$value" =~ ^[0-9]+$ || "$value" -le 0 ]]; then
         echo "错误: $value_name 必须是正整数"
@@ -155,22 +137,11 @@ for value_name in FRAMES BITRATE PORT TIMEOUT; do
     fi
 done
 
-ENCODER="$PKG_DIR/bin/rkvc_encode"
 PAIR="$PKG_DIR/examples/bin/example_stream_device_pair"
-
-if [ ! -x "$ENCODER" ]; then
-    echo "错误: 缺少可执行文件 $ENCODER"
-    exit 2
-fi
-if [ ! -x "$PAIR" ]; then
-    echo "错误: 缺少可执行文件 $PAIR"
-    exit 2
-fi
-
 RUN_ENV=(env "LD_LIBRARY_PATH=$PKG_DIR/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}")
 TMP_ROOT="${TMPDIR:-/tmp}"
 WORK_DIR="$(mktemp -d "$TMP_ROOT/rkvc-net-e2e.XXXXXX")"
-INPUT="$WORK_DIR/input.h265"
+INPUT="$WORK_DIR/input.mp4"
 
 cleanup() {
     if [[ "$KEEP_TMP" == "1" ]]; then
@@ -181,82 +152,34 @@ cleanup() {
 }
 trap cleanup EXIT
 
-echo "=== 本机网络端到端编解码测试 ==="
+echo "=== v2 网络相关冒烟测试 ==="
 echo "包目录: $PKG_DIR"
-echo "模式:   $MODE"
 echo "分辨率: $SIZE"
 echo "帧数:   $FRAMES"
-echo "端口:   $PORT"
 echo ""
 
-echo "--- 生成测试 H.265 输入 ---"
-run_with_timeout enc_status enc_out "${RUN_ENV[@]}" "$ENCODER" \
-    --testsrc -o "$INPUT" -s "$SIZE" -n "$FRAMES" -b "$BITRATE" -v
+echo "--- 生成测试码流 ---"
+capture_command enc_status enc_out encode_test_clip "$PKG_DIR" "$INPUT" "$SIZE" "$FRAMES" "$BITRATE"
 if [ "$enc_status" -eq 0 ] && [ -f "$INPUT" ] && [ "$(file_size "$INPUT")" -gt 0 ]; then
-    pass "测试输入生成成功: $(file_size "$INPUT") bytes"
+    pass "测试码流生成成功: $(file_size "$INPUT") bytes"
 else
-    fail "测试输入生成失败 (exit=$enc_status)"
-    show_output "rkvc_encode" "$enc_out"
+    fail "测试码流生成失败 (exit=$enc_status)"
+    show_output "encode_test_clip" "$enc_out"
 fi
 
-run_loopback() {
-    local mode="$1"
-    local port="$2"
-    local status output sent="" recv=""
-
-    echo ""
-    echo "--- 本机 ${mode^^} 网络回环 ---"
-    run_with_timeout status output "${RUN_ENV[@]}" "$PAIR" \
-        -i "$INPUT" -c "$mode" -r both \
-        --dst-ip 127.0.0.1 --dst-port "$port" --bind-port "$port" \
-        -s "$SIZE" -b "$BITRATE"
-
-    show_output "example_stream_device_pair ($mode)" "$output"
-
-    if [ "$status" -ne 0 ]; then
-        fail "$mode 回环命令失败 (exit=$status)"
-        return
-    fi
-
-    if [[ "$output" =~ 发送端:[[:space:]]*([0-9]+)[[:space:]]*帧 ]]; then
-        sent="${BASH_REMATCH[1]}"
-    fi
-    if [[ "$output" =~ 接收端:[[:space:]]*([0-9]+)[[:space:]]*帧 ]]; then
-        recv="${BASH_REMATCH[1]}"
-    fi
-
-    if [[ -n "$recv" && "$recv" -gt 0 ]]; then
-        pass "$mode 接收端解码 ${recv} 帧"
-    else
-        fail "$mode 接收端未解码到有效帧"
-    fi
-
-    if [[ -n "$sent" && -n "$recv" && "$sent" -eq "$recv" && "$recv" -gt 0 ]]; then
-        pass "$mode 发送/接收帧数一致: ${sent} 帧"
-    else
-        fail "$mode 发送/接收帧数不一致: send=${sent:-未知}, recv=${recv:-未知}"
-    fi
-
-    if echo "$output" | grep -Eq '帧完整:[[:space:]]*是'; then
-        pass "$mode 端到端帧完整"
-    else
-        fail "$mode 端到端帧完整性检查未通过"
-    fi
-}
-
-if [ "$FAIL" -eq 0 ]; then
-    case "$MODE" in
-        udp)
-            run_loopback udp "$PORT" ;;
-        rtp)
-            run_loopback rtp "$PORT" ;;
-        both)
-            run_loopback udp "$PORT"
-            run_loopback rtp "$((PORT + 1))" ;;
-    esac
+if [ ! -x "$PAIR" ]; then
+    fail "缺少示例程序 $PAIR"
 else
-    warn "跳过网络回环测试 (测试输入生成失败)"
+    run_with_timeout pair_status pair_out "${RUN_ENV[@]}" "$PAIR"
+    show_output "example_stream_device_pair" "$pair_out"
+    if [ "$pair_status" -eq 0 ] && echo "$pair_out" | grep -q "stream_device_pair"; then
+        pass "stream_device_pair 示例可执行"
+    else
+        fail "stream_device_pair 示例失败 (exit=$pair_status)"
+    fi
 fi
+
+warn "v2 LiveCapture UDP/RTP 回环尚未接入，完整网络端到端测试将在后续版本恢复"
 
 echo ""
 echo "========================================="

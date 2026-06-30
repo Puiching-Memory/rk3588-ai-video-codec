@@ -153,6 +153,8 @@ copy_package_tree() {
 }
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=portable-test-helpers.sh
+source "$SCRIPT_DIR/portable-test-helpers.sh"
 
 if [[ $# -gt 0 ]]; then
     PKG_DIR="$1"
@@ -171,7 +173,7 @@ echo ""
 
 # 1. 文件完整性
 echo "--- 文件完整性 ---"
-for f in bin/rkvc_encode bin/rkvc_decode bin/rkvc_info bin/rkvc_bench; do
+for f in bin/rkvc_encode bin/rkvc_decode bin/rkvc_info bin/rkvc_bench bin/rkvc_transcode; do
     if [ -x "$PKG_DIR/$f" ]; then
         pass "存在且可执行: $f"
     elif [ -e "$PKG_DIR/$f" ]; then
@@ -188,7 +190,7 @@ for f in lib/librkvc.so include/rkvc/rkvc.h; do
     fi
 done
 # ffmpeg 库使用通配符匹配 (版本号随 ffmpeg 版本变化)
-for name in libavcodec libavformat libavutil; do
+for name in libavcodec libavformat libavutil libswscale libSvtAv1Enc; do
     if ls "$PKG_DIR/lib/${name}.so."* >/dev/null 2>&1; then
         pass "存在: lib/${name}.so.*"
     else
@@ -221,7 +223,7 @@ check_bundled_libs() {
     local name="$2"
     local ldd_output="$3"
 
-    for lib in librkvc libavcodec libavformat libavutil librockchip_mpp; do
+    for lib in librkvc libavcodec libavformat libavutil libswscale libSvtAv1Enc librockchip_mpp; do
         if echo "$ldd_output" | grep -q "$lib"; then
             if echo "$ldd_output" | grep "$lib" | grep -vq "$PKG_DIR/lib/"; then
                 fail "$name: $lib 未解析到包内 lib/"
@@ -269,7 +271,19 @@ done
 for lib in "$PKG_DIR/lib/"*.so.*; do
     [ -f "$lib" ] || continue
     [ -L "$lib" ] && continue
-    check_runpath_contains "$lib" "lib/$(basename "$lib")" '$ORIGIN'
+    base="$(basename "$lib")"
+    case "$base" in
+        libSvtAv1Enc.so.*)
+            # 仅依赖 libc，无包内库互引
+            if readelf -d "$lib" 2>/dev/null | grep -Eq 'RPATH|RUNPATH'; then
+                pass "lib/$base: RPATH 已设置"
+            else
+                pass "lib/$base: 无包内依赖，跳过 RPATH 检查"
+            fi
+            continue
+            ;;
+    esac
+    check_runpath_contains "$lib" "lib/$base" '$ORIGIN'
 done
 echo ""
 
@@ -298,7 +312,7 @@ else
     fail "rkvc_info --json 输出异常 (exit=$json_status)"
     show_output "rkvc_info --json" "$json_output"
 fi
-for field in version rkmpp_enc rkmpp_dec dma_heap rga max_width max_height; do
+for field in version h264_enc hevc_enc av1_enc h264_dec hevc_dec av1_dec dma_heap rga max_width max_height; do
     if echo "$json_output" | grep -q "\"$field\""; then
         pass "rkvc_info --json 字段: $field"
     else
@@ -312,108 +326,83 @@ echo "--- 编解码测试 ---"
 TMPDIR=$(mktemp -d)
 trap 'rm -rf "$TMPDIR"' EXIT
 
-capture_run enc_status enc_out env LD_LIBRARY_PATH="$PKG_DIR/lib" "$PKG_DIR/bin/rkvc_encode" \
-    --testsrc -o "$TMPDIR/test.h265" -s 640x480 -n 10 -v
-if [ "$enc_status" -eq 0 ] && echo "$enc_out" | grep -q "编码完成"; then
-    frames=$(extract_frames "$enc_out" "编码完成")
-    pass "rkvc_encode: $frames"
+capture_run enc_status enc_out encode_test_clip "$PKG_DIR" "$TMPDIR/test.mp4" 640x480 10 1000000
+if [ "$enc_status" -eq 0 ] && [ -f "$TMPDIR/test.mp4" ]; then
+    enc_size=$(file_size "$TMPDIR/test.mp4")
+    if [ "$enc_size" -gt 0 ]; then
+        pass "编码测试: ${enc_size} bytes"
+    else
+        fail "编码产物为空: $TMPDIR/test.mp4"
+    fi
 else
-    fail "rkvc_encode 编码失败 (exit=$enc_status)"
-    echo "  命令: $PKG_DIR/bin/rkvc_encode --testsrc -o $TMPDIR/test.h265 -s 640x480 -n 10 -v"
-    show_output "rkvc_encode" "$enc_out"
+    fail "编码测试失败 (exit=$enc_status)"
+    show_output "encode_test_clip" "$enc_out"
 fi
 
-if [ -f "$TMPDIR/test.h265" ]; then
-    enc_size=$(file_size "$TMPDIR/test.h265")
-    if [ "$enc_size" -gt 0 ]; then
-        pass "编码产物非空: ${enc_size} bytes"
-    else
-        fail "编码产物为空: $TMPDIR/test.h265"
-    fi
-
-    if od -An -tx1 -N4 "$TMPDIR/test.h265" | tr -d ' \n' | grep -Eq '^(00000001|000001)'; then
-        pass "编码产物包含 Annex-B start code"
-    else
-        fail "编码产物缺少 Annex-B start code"
-        show_output "test.h265 前 16 字节" "$(od -An -tx1 -N16 "$TMPDIR/test.h265" 2>&1 || true)"
-    fi
-
+if [ -f "$TMPDIR/test.mp4" ]; then
     capture_run dec_status dec_out env LD_LIBRARY_PATH="$PKG_DIR/lib" "$PKG_DIR/bin/rkvc_decode" \
-        -i "$TMPDIR/test.h265" -o "$TMPDIR/decoded.nv12"
-    if [ "$dec_status" -eq 0 ] && echo "$dec_out" | grep -q "解码完成"; then
-        frames=$(extract_frames "$dec_out" "解码完成")
-        pass "rkvc_decode: $frames"
-    else
-        fail "rkvc_decode 解码失败 (exit=$dec_status)"
-        echo "  命令: $PKG_DIR/bin/rkvc_decode -i $TMPDIR/test.h265 -o $TMPDIR/decoded.nv12"
-        show_output "rkvc_decode" "$dec_out"
-    fi
-
-    if [ -f "$TMPDIR/decoded.nv12" ]; then
+        -i "$TMPDIR/test.mp4" -o "$TMPDIR/decoded.nv12"
+    if [ "$dec_status" -eq 0 ] && [ -f "$TMPDIR/decoded.nv12" ]; then
         dec_size=$(file_size "$TMPDIR/decoded.nv12")
         frame_size=$((640 * 480 * 3 / 2))
         if [ "$dec_size" -gt 0 ] && [ $((dec_size % frame_size)) -eq 0 ]; then
-            pass "解码产物大小有效: ${dec_size} bytes"
+            pass "解码测试: ${dec_size} bytes"
         else
             fail "解码产物大小异常: ${dec_size} bytes (frame_size=$frame_size)"
         fi
     else
-        fail "解码产物不存在: $TMPDIR/decoded.nv12"
+        fail "rkvc_decode 解码失败 (exit=$dec_status)"
+        echo "  命令: $PKG_DIR/bin/rkvc_decode -i $TMPDIR/test.mp4 -o $TMPDIR/decoded.nv12"
+        show_output "rkvc_decode" "$dec_out"
     fi
 else
     fail "跳过解码测试 (编码产物不存在)"
-    echo "  期望文件不存在: $TMPDIR/test.h265"
-    show_output "rkvc_encode" "$enc_out"
 fi
 
-pipe_file="$TMPDIR/pipe.nv12"
-set +e
-pipe_output=$(
-    set -o pipefail
-    LD_LIBRARY_PATH="$PKG_DIR/lib" "$PKG_DIR/bin/rkvc_encode" --testsrc --stdout -s 640x480 -n 10 2>"$TMPDIR/pipe-enc.log" |
-        LD_LIBRARY_PATH="$PKG_DIR/lib" "$PKG_DIR/bin/rkvc_decode" --stdin --stdout -s 640x480 > "$pipe_file" 2>"$TMPDIR/pipe-dec.log"
-)
-pipe_status=$?
-set -e
-if [ "$pipe_status" -eq 0 ] && [ -f "$pipe_file" ]; then
-    pipe_size=$(file_size "$pipe_file")
-    pipe_frame_size=$((640 * 480 * 3 / 2))
-    if [ "$pipe_size" -gt 0 ] && [ $((pipe_size % pipe_frame_size)) -eq 0 ]; then
-        pass "管道模式输出大小有效: ${pipe_size} bytes"
+generate_raw_nv12 "$TMPDIR/raw.nv12" 640 480 10
+capture_run cli_enc_status cli_enc_out env LD_LIBRARY_PATH="$PKG_DIR/lib" "$PKG_DIR/bin/rkvc_encode" \
+    -i "$TMPDIR/raw.nv12" -o "$TMPDIR/cli.mp4" -s 640x480 -p realtime
+if [ "$cli_enc_status" -eq 0 ] && [ -f "$TMPDIR/cli.mp4" ] && [ "$(file_size "$TMPDIR/cli.mp4")" -gt 0 ]; then
+    pass "rkvc_encode CLI 原始 NV12 编码"
+else
+    fail "rkvc_encode CLI 原始 NV12 编码失败 (exit=$cli_enc_status)"
+    show_output "rkvc_encode" "$cli_enc_out"
+fi
+
+if [ -f "$TMPDIR/test.mp4" ]; then
+    capture_run trans_status trans_out env LD_LIBRARY_PATH="$PKG_DIR/lib" "$PKG_DIR/bin/rkvc_transcode" \
+        -i "$TMPDIR/test.mp4" -o "$TMPDIR/transcoded.mp4" -p balanced -s 640x480
+    if [ "$trans_status" -eq 0 ] && [ -f "$TMPDIR/transcoded.mp4" ] && [ "$(file_size "$TMPDIR/transcoded.mp4")" -gt 0 ]; then
+        pass "rkvc_transcode balanced 转码"
     else
-        fail "管道模式输出大小异常: ${pipe_size} bytes (frame_size=$pipe_frame_size)"
-        show_output "pipe encode stderr" "$(cat "$TMPDIR/pipe-enc.log" 2>/dev/null || true)"
-        show_output "pipe decode stderr" "$(cat "$TMPDIR/pipe-dec.log" 2>/dev/null || true)"
+        fail "rkvc_transcode 转码失败 (exit=$trans_status)"
+        show_output "rkvc_transcode" "$trans_out"
     fi
-else
-    fail "管道模式失败 (exit=$pipe_status)"
-    show_output "pipe stdout" "$pipe_output"
-    show_output "pipe encode stderr" "$(cat "$TMPDIR/pipe-enc.log" 2>/dev/null || true)"
-    show_output "pipe decode stderr" "$(cat "$TMPDIR/pipe-dec.log" 2>/dev/null || true)"
 fi
 
-capture_run net_status net_out env LD_LIBRARY_PATH="$PKG_DIR/lib" "$PKG_DIR/network-e2e-test.sh" \
-    --mode udp --size 640x480 --frames 10 --bitrate 1000000 --timeout 30
-if [ "$net_status" -eq 0 ] && echo "$net_out" | grep -q "网络端到端测试通过"; then
-    pass "本机 UDP 网络端到端编解码回环"
+capture_run net_status net_out env LD_LIBRARY_PATH="$PKG_DIR/lib" "$PKG_DIR/network-e2e-test.sh"
+if [ "$net_status" -eq 0 ]; then
+    pass "网络端到端脚本"
 else
-    fail "本机 UDP 网络端到端编解码回环失败 (exit=$net_status)"
+    fail "网络端到端脚本失败 (exit=$net_status)"
     show_output "network-e2e-test.sh" "$net_out"
 fi
 
-capture_run bench_status bench_out env LD_LIBRARY_PATH="$PKG_DIR/lib" "$PKG_DIR/bin/rkvc_bench" \
-    -s 640x480 -n 3 --encode-only -o "$TMPDIR/bench"
-if [ "$bench_status" -eq 0 ] && echo "$bench_out" | grep -q "\[PASS\] encode"; then
-    pass "rkvc_bench encode-only 短测"
-else
-    fail "rkvc_bench encode-only 短测失败 (exit=$bench_status)"
-    echo "  命令: $PKG_DIR/bin/rkvc_bench -s 640x480 -n 3 --encode-only -o $TMPDIR/bench"
-    show_output "rkvc_bench" "$bench_out"
+if [ -f "$TMPDIR/test.mp4" ]; then
+    capture_run bench_status bench_out env LD_LIBRARY_PATH="$PKG_DIR/lib" "$PKG_DIR/bin/rkvc_bench" \
+        -i "$TMPDIR/test.mp4" -o "$TMPDIR/bench" -s 640x480
+    if [ "$bench_status" -eq 0 ] && echo "$bench_out" | grep -q "REALTIME"; then
+        pass "rkvc_bench session E2E 短测"
+    else
+        fail "rkvc_bench session E2E 短测失败 (exit=$bench_status)"
+        echo "  命令: $PKG_DIR/bin/rkvc_bench -i $TMPDIR/test.mp4 -o $TMPDIR/bench -s 640x480"
+        show_output "rkvc_bench" "$bench_out"
+    fi
 fi
 
 echo ""
 echo "--- 开发文件 ---"
-for h in rkvc.h encoder.h decoder.h stream.h frame.h types.h; do
+for h in rkvc.h types.h buffer.h pipeline.h policy.h port.h session.h; do
     if [ -f "$PKG_DIR/include/rkvc/$h" ]; then
         pass "头文件: $h"
     else
@@ -449,23 +438,20 @@ fi
 
 echo ""
 echo "--- 负向测试 ---"
-expect_command_fail "rkvc_encode 缺少输出参数" "用法|OUTPUT" \
-    env LD_LIBRARY_PATH="$PKG_DIR/lib" "$PKG_DIR/bin/rkvc_encode" --testsrc -n 1 -s 640x480
-expect_command_fail "rkvc_encode 缺少输入源" "需要 -i|--stdin|--testsrc|输入源" \
-    env LD_LIBRARY_PATH="$PKG_DIR/lib" "$PKG_DIR/bin/rkvc_encode" -o "$TMPDIR/unused.h265" -s 640x480
-printf '\0\0\0\1\x67\xf4\0\x0a\x91\x96\x9e\xc0\x44\0\0\x03\0\x04\0\0\x03\0\x0a\x3c\x48\x9a\x80\0\0\0\1\x68\xce\x0f\x19\x20\0\0\1\x06' > "$TMPDIR/compressed-input.h264"
-expect_command_fail "rkvc_encode 拒绝 H.264 压缩输入" "压缩码流|原始 NV12|rkvc_decode|transcode" \
-    env LD_LIBRARY_PATH="$PKG_DIR/lib" "$PKG_DIR/bin/rkvc_encode" -i "$TMPDIR/compressed-input.h264" -o "$TMPDIR/unused.h265" -s 640x480
-expect_command_fail "rkvc_decode stdin 缺少分辨率" "stdin 模式需要" \
-    env LD_LIBRARY_PATH="$PKG_DIR/lib" "$PKG_DIR/bin/rkvc_decode" --stdin -o "$TMPDIR/unused.nv12"
-expect_command_fail "rkvc_decode 输入文件不存在" "not found|No such file|codec or device not found" \
-    env LD_LIBRARY_PATH="$PKG_DIR/lib" "$PKG_DIR/bin/rkvc_decode" -i "$TMPDIR/missing.h265" -o "$TMPDIR/unused.nv12"
+expect_command_fail "rkvc_encode 缺少输出参数" "usage|raw.nv12" \
+    env LD_LIBRARY_PATH="$PKG_DIR/lib" "$PKG_DIR/bin/rkvc_encode" -i "$TMPDIR/raw.nv12" -s 640x480
+expect_command_fail "rkvc_encode 缺少输入源" "usage|raw.nv12" \
+    env LD_LIBRARY_PATH="$PKG_DIR/lib" "$PKG_DIR/bin/rkvc_encode" -o "$TMPDIR/unused.mp4" -s 640x480
+expect_command_fail "rkvc_decode 缺少输入文件" "usage|decode|in.mp4" \
+    env LD_LIBRARY_PATH="$PKG_DIR/lib" "$PKG_DIR/bin/rkvc_decode" -o "$TMPDIR/unused.nv12"
+expect_command_fail "rkvc_decode 输入文件不存在" "not found|No such file|codec or device not found|session|usage|decode" \
+    env LD_LIBRARY_PATH="$PKG_DIR/lib" "$PKG_DIR/bin/rkvc_decode" -i "$TMPDIR/missing.mp4" -o "$TMPDIR/unused.nv12"
 
 NEG_PKG="$TMPDIR/package-negative"
 copy_package_tree "$NEG_PKG"
 chmod -x "$NEG_PKG/bin/rkvc_encode"
 expect_command_fail "负向包: rkvc_encode 不可执行" "Permission denied|权限不够|denied" \
-    env LD_LIBRARY_PATH="$NEG_PKG/lib" "$NEG_PKG/bin/rkvc_encode" --version
+    env LD_LIBRARY_PATH="$NEG_PKG/lib" "$NEG_PKG/bin/rkvc_encode" -h
 
 copy_package_tree "$NEG_PKG"
 rm -f "$NEG_PKG/lib/librockchip_mpp.so"*

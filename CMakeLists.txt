@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 project(rkvc
-    VERSION 0.1.6
-    DESCRIPTION "RK3588 H.265 Video Codec Library (RKMPP)"
+    VERSION 0.2.0
+    DESCRIPTION "RK3588 multi-codec pipeline library"
     LANGUAGES C
 )
 
@@ -18,6 +18,12 @@ set(RKVC_VERSION_COMPILE_DEFS
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+
+# 默认限制 cmake --build / ninja 并行度（脚本侧另见 scripts/build-common.sh）
+set(RKVC_BUILD_JOBS_MAX 4 CACHE STRING "Maximum parallel compile jobs")
+if(NOT DEFINED CMAKE_BUILD_PARALLEL_LEVEL)
+    set(CMAKE_BUILD_PARALLEL_LEVEL ${RKVC_BUILD_JOBS_MAX})
+endif()
 
 # ── 选项 ──────────────────────────────────────────────────────────────
 option(RKVC_BUILD_SHARED   "Build shared library"      ON)
@@ -47,12 +53,22 @@ set(AVCODEC_LIB_DIRS
 # ── MPP (rockchip mpp) ───────────────────────────────────────────────
 # 始终使用 third_party/ 源码树构建的静态库
 set(MPP_BUILD_DIR "${CMAKE_BINARY_DIR}/mpp_build" CACHE PATH "MPP build output directory")
+set(MPP_INSTALL_PREFIX "${CMAKE_SOURCE_DIR}/build-deps/mpp-install" CACHE PATH "MPP install prefix")
+if(EXISTS "${MPP_INSTALL_PREFIX}/lib/librockchip_mpp.so")
+    set(MPP_LIB_DIR "${MPP_INSTALL_PREFIX}/lib")
+else()
+    set(MPP_LIB_DIR "${MPP_BUILD_DIR}/mpp")
+endif()
 set(MPP_INCLUDE_DIR "${CMAKE_SOURCE_DIR}/third_party/mpp/inc")
-set(MPP_LIB_DIR "${MPP_BUILD_DIR}/mpp")
 
+# SVT-AV1 (submodule, 直连 libSvtAv1Enc)
+set(SVT_SRC_DIR "${CMAKE_SOURCE_DIR}/third_party/SVT-AV1")
+set(SVT_PREFIX "${CMAKE_SOURCE_DIR}/build-deps/svt-av1-install" CACHE PATH "SVT-AV1 install prefix")
+set(SVT_INCLUDE_DIR "${SVT_PREFIX}/include")
 set(RKVC_DEP_LIB_DIRS
     ${AVCODEC_LIB_DIRS}
     ${MPP_LIB_DIR}
+    ${SVT_PREFIX}/lib
 )
 
 set(RKVC_RPATH_LINK_OPTIONS "")
@@ -69,17 +85,27 @@ set(FFMPEG_LIBS -Wl,--start-group avcodec avformat avutil swscale -Wl,--end-grou
 set(EXTRA_LIBS
     -Wl,--no-as-needed
     rockchip_mpp
+    SvtAv1Enc
     -Wl,--as-needed
     z drm pthread m rga rt
 )
 set(RKVC_SOURCES
     lib/init.c
-    lib/frame.c
-    lib/scale.c
-    lib/encoder.c
-    lib/decoder.c
-    lib/stream.c
     lib/utils.c
+    lib/buffer_pool.c
+    lib/router.c
+    lib/pipeline.c
+    lib/port.c
+    lib/scheduler.c
+    lib/session.c
+    lib/node_demux.c
+    lib/node_mux.c
+    lib/node_mpp_dec.c
+    lib/node_mpp_enc.c
+    lib/node_svt_enc.c
+    lib/node_rga.c
+    lib/node_post_upscale.c
+    lib/node_dma_to_host.c
 )
 
 add_library(rkvc_instrumentation INTERFACE)
@@ -139,6 +165,7 @@ if(RKVC_BUILD_SHARED)
         PRIVATE
             ${AVCODEC_INCLUDE_DIRS}
             ${MPP_INCLUDE_DIR}
+            ${SVT_INCLUDE_DIR}
             ${CMAKE_CURRENT_SOURCE_DIR}/lib
     )
     target_link_directories(rkvc_shared PRIVATE ${RKVC_DEP_LIB_DIRS})
@@ -165,6 +192,7 @@ if(RKVC_BUILD_STATIC)
         PRIVATE
             ${AVCODEC_INCLUDE_DIRS}
             ${MPP_INCLUDE_DIR}
+            ${SVT_INCLUDE_DIR}
             ${CMAKE_CURRENT_SOURCE_DIR}/lib
     )
     target_link_directories(rkvc_static PUBLIC ${RKVC_DEP_LIB_DIRS})
@@ -250,6 +278,8 @@ if(RKVC_BUILD_TOOLS)
         tools/rkvc_bench.c
         tools/rkvc_encode.c
         tools/rkvc_decode.c
+        tools/rkvc_transcode.c
+        tools/rkvc_yuv_upscale.c
         tools/rkvc_info.c
     )
 
@@ -273,6 +303,14 @@ if(RKVC_BUILD_TOOLS)
             list(APPEND RKVC_TOOLS ${TOOL_NAME})
         endif()
     endforeach()
+
+    add_custom_target(bench-rd
+        COMMAND ${CMAKE_SOURCE_DIR}/scripts/run-bench.sh
+        DEPENDS ${RKVC_TOOLS}
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        COMMENT "Run RD benchmark (requires SRC_VIDEO or pass video path to script)"
+        VERBATIM
+    )
 endif()
 
 # ── 安装 ──────────────────────────────────────────────────────────────
@@ -366,11 +404,13 @@ if(RKVC_BUILD_TESTS)
 
     set(RKVC_TEST_SOURCES
         tests/test_types.c
-        tests/test_frame.c
+        tests/test_router.c
+        tests/test_buffer.c
         tests/test_contracts.c
         tests/test_internal.c
         tests/test_hardware.c
         tests/test_scale.c
+        tests/test_post_upscale.c
     )
 
     if(RKVC_ENABLE_FAULT_INJECTION)
@@ -400,6 +440,7 @@ if(RKVC_BUILD_TESTS)
                 ${CMAKE_CURRENT_SOURCE_DIR}/lib
                 ${CMOCKA_INCLUDE_DIRS}
                 ${AVCODEC_INCLUDE_DIRS}
+                ${SVT_INCLUDE_DIR}
         )
         target_link_directories(${TEST_NAME}
             PRIVATE
@@ -409,19 +450,41 @@ if(RKVC_BUILD_TESTS)
         target_link_options(${TEST_NAME}
             PRIVATE ${RKVC_RPATH_LINK_OPTIONS}
         )
-        add_test(NAME ${TEST_NAME} COMMAND ${TEST_NAME})
-        set_tests_properties(${TEST_NAME} PROPERTIES
-            LABELS unit
-            ENVIRONMENT "${RKVC_TEST_ENVIRONMENT}"
-        )
         if(TEST_NAME STREQUAL "test_hardware")
+            # 拆成独立 CTest 用例，避免单次进程内连续压榨 MPP/RGA 驱动。
+        else()
+            add_test(NAME ${TEST_NAME} COMMAND ${TEST_NAME})
             set_tests_properties(${TEST_NAME} PROPERTIES
-                LABELS integration
-                SKIP_RETURN_CODE 77
+                LABELS unit
                 ENVIRONMENT "${RKVC_TEST_ENVIRONMENT}"
             )
+            if(TEST_NAME STREQUAL "test_scale")
+                set_tests_properties(${TEST_NAME} PROPERTIES
+                    LABELS "hardware;integration"
+                    RUN_SERIAL TRUE
+                    SKIP_RETURN_CODE 77
+                    ENVIRONMENT "${RKVC_TEST_ENVIRONMENT}"
+                )
+            endif()
         endif()
         list(APPEND RKVC_TEST_TARGETS ${TEST_NAME})
+    endforeach()
+
+    set(RKVC_HW_TEST_CASES
+        test_session_transcode_h264
+        test_session_decode_nv12
+        test_session_encode_h264
+        test_session_av1_storage
+        test_session_encode_decode_upscale_3x
+    )
+    foreach(hw_case ${RKVC_HW_TEST_CASES})
+        add_test(NAME ${hw_case} COMMAND test_hardware ${hw_case})
+        set_tests_properties(${hw_case} PROPERTIES
+            LABELS "hardware;integration"
+            RUN_SERIAL TRUE
+            SKIP_RETURN_CODE 77
+            ENVIRONMENT "${RKVC_TEST_ENVIRONMENT}"
+        )
     endforeach()
 
     set(RKVC_CHECK_DEPENDS ${RKVC_TEST_TARGETS})
@@ -430,7 +493,7 @@ if(RKVC_BUILD_TESTS)
     endif()
 
     add_custom_target(check
-        COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
+        COMMAND ${CMAKE_CTEST_COMMAND} -j1 --output-on-failure
         DEPENDS ${RKVC_CHECK_DEPENDS}
         WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
         COMMENT "Building and running rkvc unit tests"
@@ -453,6 +516,7 @@ if(RKVC_BUILD_TESTS)
         )
         set_tests_properties(test_bench_permission_failure PROPERTIES
             LABELS unit
+            SKIP_RETURN_CODE 77
             ENVIRONMENT "${RKVC_TEST_ENVIRONMENT}"
         )
     endif()
@@ -478,7 +542,7 @@ endif()
 # ── CPack 打包 ───────────────────────────────────────────────────────
 set(CPACK_PACKAGE_NAME "rkvc")
 set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
-set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "RK3588 H.265 Video Codec Library (RKMPP)")
+set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "RK3588 multi-codec pipeline library (rkvc v2)")
 set(CPACK_PACKAGE_CONTACT "rkvc@example.com")
 set(CPACK_PACKAGE_VENDOR "rkvc")
 set(CPACK_RESOURCE_FILE_LICENSE "${CMAKE_CURRENT_SOURCE_DIR}/LICENSE")

@@ -1,27 +1,34 @@
-# rkvc — RK3588 H.265 视频编解码库
+# rkvc — RK3588 多码率视频编解码库 (v2)
 
-基于 [ffmpeg-rockchip](https://github.com/nyanmisaka/ffmpeg-rockchip) 的 RKMPP 硬件加速，为 RK3588 提供高性能 H.265 编解码 C API。
+面向 RK3588 的 C 库，基于 [ffmpeg-rockchip](https://github.com/nyanmisaka/ffmpeg-rockchip) RKMPP 硬件加速与 SVT-AV1，提供 **Session + Pipeline + Codec Router** 统一 API。
+
+当前版本：**0.2.0**
 
 ## 功能特性
 
-- **H.265 硬件编码** — RKMPP 加速，支持 8K 分辨率，异步编码
-- **H.265 硬件解码** — RKMPP 加速，支持 8K 10-bit 解码
-- **离线处理** — 文件输入/输出，自动 muxer/demuxer
-- **实时流式处理** — 帧级 push/pull API，适合监控/推流场景
-- **零拷贝 DMA** — 硬件帧在 VPU 和 RGA 之间零拷贝传递
+- **Codec Router** — `REALTIME`→H.264 RKMPP、`BALANCED`→HEVC RKMPP、`QUALITY`→SVT-AV1 + `av1_rkmpp` 硬解
+- **Session API** — `rkvc_session` + 命名端口 `capture` / `output` / `preview`
+- **DMA-BUF 缓冲** — `rkvc_buffer` 统一视频帧与码流；RGA 硬件缩放
+- **模板管线** — 文件编解码、转码、AV1 存储、LiveCapture（V4L2 待接）
+- **下采样 + 后处理上采样** — `enc_scale_denom` + `post_upscale_algo`（传统插值，NN 占位）
 
-## 性能
+## 性能 (RK3588, 1080p E2E)
 
-| 测试类型   | 帧率     | 实时倍率 |
-| ---------- | -------- | -------- |
-| H.265 编码 | ~290 fps | ~9.6x    |
-| H.265 解码 | ~270 fps | ~9.0x    |
-| 流式编码   | ~215 fps | ~7.2x    |
+| 路线 | E2E fps | policy |
+|------|---------|--------|
+| H.264 RKMPP | ~36 | `REALTIME` |
+| HEVC RKMPP | ~27 | `BALANCED` |
+| SVT-AV1 + av1_rkmpp | ~24 | `QUALITY` |
+
+完整 RD 码率-画质对比见 [bench/README.md](../bench/README.md)。
 
 ## 导航
 
-- [快速开始](getting-started.md) — 构建、安装、首次运行
-- [API 参考](api.md) — 完整 API 文档
-- [架构](architecture.md) — 内部设计和模块关系
-- [基准测试](benchmark.md) — 性能测试方法和结果
-- [测试](testing.md) — 严格测试策略与执行矩阵
+- [快速开始](getting-started.md) — 依赖构建、编译、首次运行
+- [架构](architecture.md) — Session 图、Codec Router、节点管线
+- [API 参考](api.md) — v2 公共 API
+- [v1 → v2 迁移](migration.md) — 破坏性升级迁移指南
+- [基准测试](benchmark.md) — `rkvc_bench` 与 RD 套件
+- [测试](testing.md) — 测试矩阵与质量门禁
+- [打包与分发](packaging.md) — 可移植包、DEB、CPack
+- [交付文档](delivery.md) — 客户交付清单与故障排查

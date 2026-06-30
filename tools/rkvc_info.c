@@ -1,49 +1,33 @@
 /**
  * @file rkvc_info.c
- * @brief 硬件能力查询工具。
- *
- * 用法:
- *   rkvc_info
- *   rkvc_info --version
+ * @brief v2 硬件能力查询工具。
  */
 
 #include "rkvc/rkvc.h"
 #include <stdio.h>
-#include <string.h>
 #include <getopt.h>
 
-static void usage(void) {
-    printf(
-        "rkvc_info — RK3588 VPU 硬件能力查询工具\n"
-        "\n"
-        "用法:\n"
-        "  rkvc_info [选项]\n"
-        "\n"
-        "选项:\n"
-        "  -v, --version    显示版本\n"
-        "  -j, --json       JSON 格式输出\n"
-        "  -h, --help       显示帮助\n"
-    );
+static void usage(void)
+{
+    printf("rkvc_info — RK3588 multi-codec 能力查询\n"
+           "  -v, --version   版本\n"
+           "  -j, --json      JSON 输出\n");
 }
 
-int main(int argc, char **argv) {
-    int show_version = 0, json_output = 0;
-
-    static struct option long_opts[] = {
+int main(int argc, char **argv)
+{
+    int show_version = 0, json = 0;
+    static struct option opts[] = {
         {"version", no_argument, 0, 'v'},
-        {"json",    no_argument, 0, 'j'},
-        {"help",    no_argument, 0, 'h'},
+        {"json", no_argument, 0, 'j'},
+        {"help", no_argument, 0, 'h'},
         {0, 0, 0, 0}
     };
-
     int c;
-    while ((c = getopt_long(argc, argv, "vjh", long_opts, NULL)) != -1) {
-        switch (c) {
-        case 'v': show_version = 1; break;
-        case 'j': json_output = 1; break;
-        case 'h': usage(); return 0;
-        default: usage(); return 1;
-        }
+    while ((c = getopt_long(argc, argv, "vjh", opts, NULL)) != -1) {
+        if (c == 'v') show_version = 1;
+        else if (c == 'j') json = 1;
+        else { usage(); return c == 'h' ? 0 : 1; }
     }
 
     if (show_version) {
@@ -52,34 +36,33 @@ int main(int argc, char **argv) {
     }
 
     rkvc_init();
-
     rkvc_caps caps;
-    rkvc_err err = rkvc_query_caps(&caps);
-    if (err != RKVC_OK) {
-        fprintf(stderr, "能力查询失败: %s\n", rkvc_err_str(err));
+    if (rkvc_query_caps(&caps) != RKVC_OK)
         return 1;
-    }
 
-    if (json_output) {
-        printf("{\n");
-        printf("  \"version\": \"%s\",\n", rkvc_version());
-        printf("  \"rkmpp_enc\": %s,\n", caps.has_rkmpp_enc ? "true" : "false");
-        printf("  \"rkmpp_dec\": %s,\n", caps.has_rkmpp_dec ? "true" : "false");
-        printf("  \"dma_heap\": %s,\n", caps.has_dma_heap ? "true" : "false");
-        printf("  \"rga\": %s,\n", caps.has_rga ? "true" : "false");
-        printf("  \"max_width\": %d,\n", caps.max_width);
-        printf("  \"max_height\": %d\n", caps.max_height);
-        printf("}\n");
+    if (json) {
+        printf("{\"version\":\"%s\",\"h264_enc\":%s,\"hevc_enc\":%s,"
+               "\"av1_enc\":%s,\"h264_dec\":%s,\"hevc_dec\":%s,"
+               "\"av1_dec\":%s,\"dma_heap\":%s,\"rga\":%s,"
+               "\"max_width\":%d,\"max_height\":%d}\n",
+               rkvc_version(),
+               caps.has_h264_enc ? "true" : "false",
+               caps.has_hevc_enc ? "true" : "false",
+               caps.has_av1_enc ? "true" : "false",
+               caps.has_h264_dec ? "true" : "false",
+               caps.has_hevc_dec ? "true" : "false",
+               caps.has_av1_dec ? "true" : "false",
+               caps.has_dma_heap ? "true" : "false",
+               caps.has_rga ? "true" : "false",
+               caps.max_width, caps.max_height);
     } else {
         printf("rkvc %s\n", rkvc_version());
-        printf("\n硬件能力:\n");
-        printf("  RKMPP 编码: %s\n", caps.has_rkmpp_enc ? "可用" : "不可用");
-        printf("  RKMPP 解码: %s\n", caps.has_rkmpp_dec ? "可用" : "不可用");
-        printf("  DMA Heap:   %s\n", caps.has_dma_heap ? "可用" : "不可用");
-        printf("  RGA 2D:     %s\n", caps.has_rga ? "可用" : "不可用");
-        printf("  最大分辨率: %dx%d\n", caps.max_width, caps.max_height);
+        printf("H.264 enc/dec: %d/%d\n", caps.has_h264_enc, caps.has_h264_dec);
+        printf("HEVC  enc/dec: %d/%d\n", caps.has_hevc_enc, caps.has_hevc_dec);
+        printf("AV1   enc/dec: %d/%d\n", caps.has_av1_enc, caps.has_av1_dec);
+        printf("DMA heap: %d  RGA: %d  max %dx%d\n",
+               caps.has_dma_heap, caps.has_rga,
+               caps.max_width, caps.max_height);
     }
-
-    rkvc_deinit();
     return 0;
 }

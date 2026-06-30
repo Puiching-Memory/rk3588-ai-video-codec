@@ -1,207 +1,271 @@
-# API 参考
+# rkvc v2 API 参考
 
-!!! note
-    完整的 API 文档请查看 Doxygen 生成的 HTML 参考：
+v2 以 **Session + Pipeline + Codec Router** 替代 v1 的 `encoder` / `decoder` / `stream` / `frame` 四套 API。
 
-    ```bash
-    cmake -B build -DRKVC_BUILD_DOCS=ON
-    cmake --build build --target docs
-    # 输出在 build/docs/html/index.html
-    ```
+## 头文件
 
-    在线 Doxygen 文档：[API HTML 参考](https://puiching-memory.github.io/rk3588-ai-video-codec/doxygen/)
-
-## 核心概念
-
-### 错误处理
-
-所有函数返回 `rkvc_err` 枚举：
+| 头文件 | 说明 |
+|--------|------|
+| `rkvc.h` | 主入口：版本、init、caps、输入探测 |
+| `buffer.h` | `rkvc_buffer` 视频/码流统一缓冲 |
+| `policy.h` | `rkvc_policy`、`rkvc_codec`、Codec Router |
+| `pipeline.h` | `rkvc_pipeline_desc`、管线模板 |
+| `session.h` | `rkvc_session` 生命周期与统计 |
+| `port.h` | `rkvc_port_push` / `rkvc_port_pull` |
 
 ```c
-rkvc_err err = rkvc_encoder_open(&enc, &cfg);
-if (err != RKVC_OK) {
-    fprintf(stderr, "错误: %s\n", rkvc_err_str(err));
+#include "rkvc/rkvc.h"   // 包含以上全部头文件
+```
+
+## 全局初始化
+
+```c
+rkvc_err rkvc_init(void);       // 线程安全，可多次调用
+void     rkvc_deinit(void);
+const char *rkvc_version(void); // "0.2.0"
+uint32_t    rkvc_version_number(void); // major<<16 | minor<<8 | patch
+const char *rkvc_err_str(rkvc_err err);
+```
+
+## 能力与权限
+
+```c
+typedef struct {
+    int has_h264_enc, has_hevc_enc, has_av1_enc;
+    int has_h264_dec, has_hevc_dec, has_av1_dec;
+    int has_dma_heap, has_rga;
+    int max_width, max_height;
+} rkvc_caps;
+
+rkvc_err rkvc_query_caps(rkvc_caps *caps);
+rkvc_err rkvc_check_hw_permissions(void);  // 权限不足 → RKVC_ERR_PERMISSION
+```
+
+`rkvc_info --json` 输出字段与 `rkvc_caps` 对应。
+
+## 错误码
+
+| 错误码 | 值 | 含义 |
+|--------|-----|------|
+| `RKVC_OK` | 0 | 成功 |
+| `RKVC_ERR_NOMEM` | -1 | 内存分配失败 |
+| `RKVC_ERR_INVALID` | -2 | 参数无效 |
+| `RKVC_ERR_NOT_FOUND` | -3 | 编解码器或设备未找到 |
+| `RKVC_ERR_IO` | -4 | I/O 错误 |
+| `RKVC_ERR_HW` | -5 | 硬件加速初始化失败 |
+| `RKVC_ERR_EOF` | -6 | 流结束 |
+| `RKVC_ERR_AGAIN` | -7 | 需要更多输入或输出缓冲区满 |
+| `RKVC_ERR_MUX` | -8 | 封装器错误 |
+| `RKVC_ERR_INTERNAL` | -9 | 内部 FFmpeg 错误 |
+| `RKVC_ERR_PERMISSION` | -10 | 设备节点权限不足 |
+| `RKVC_ERR_FORMAT` | -11 | 输入数据格式不匹配 |
+
+## 像素格式
+
+| 格式 | 枚举 | 说明 |
+|------|------|------|
+| NV12 | `RKVC_PIX_FMT_NV12` | 默认，VPU 原生 |
+| YUV420P | `RKVC_PIX_FMT_YUV420P` | Planar 4:2:0 |
+| NV16 | `RKVC_PIX_FMT_NV16` | 4:2:2 semi-planar |
+| P010 | `RKVC_PIX_FMT_P010` | 10-bit 4:2:0 |
+
+## Policy 与 Codec
+
+```c
+typedef enum {
+    RKVC_POLICY_REALTIME = 0,  // H.264 RKMPP
+    RKVC_POLICY_BALANCED,      // HEVC RKMPP（高帧率 1080p+ 回退 H.264）
+    RKVC_POLICY_QUALITY,       // SVT-AV1 + av1_rkmpp
+} rkvc_policy;
+
+typedef enum {
+    RKVC_CODEC_H264, RKVC_CODEC_HEVC, RKVC_CODEC_AV1, RKVC_CODEC_AUTO,
+} rkvc_codec;
+```
+
+```c
+typedef struct {
+    rkvc_codec       codec;
+    rkvc_enc_backend enc_backend;  // MPP 或 SVT
+    rkvc_dec_backend dec_backend;
+    const char      *enc_name;     // "h264_rkmpp" / "svt-av1" 等
+    const char      *dec_name;
+    int              svt_preset;
+    const char      *reason;
+} rkvc_route_plan;
+
+rkvc_err rkvc_route_resolve(const rkvc_pipeline_desc *desc, rkvc_route_plan *plan);
+```
+
+## 管线描述
+
+```c
+typedef struct rkvc_pipeline_desc {
+    rkvc_pipeline_template template_id;
+    rkvc_policy            policy;
+    rkvc_codec             codec;
+
+    int            width, height;
+    int            fps_num, fps_den;
+    int64_t        bitrate;
+    rkvc_pix_fmt   pixel_format;
+    int            gop_size, b_frames;
+    int            low_latency;
+    int            queue_depth;       // 端口队列深度，默认 3
+    rkvc_rc_mode   rc_mode;           // VBR / CBR / CQP
+    int            qp_init;           // -1 表示编码器默认
+
+    const char    *input_path;
+    const char    *output_path;
+
+    int            enc_scale_denom;           // 1=全分辨率编码
+    rkvc_upscale_algo post_upscale_algo;      // 解码后上采样
+} rkvc_pipeline_desc;
+```
+
+### 模板
+
+| 模板 | 默认 policy | 说明 |
+|------|-------------|------|
+| `RKVC_TEMPLATE_FILE_ENCODE` | `REALTIME` | 原始 NV12 → 编码文件 |
+| `RKVC_TEMPLATE_FILE_DECODE` | `BALANCED` | 容器 → 原始 NV12 |
+| `RKVC_TEMPLATE_FILE_TRANSCODE` | `BALANCED` | 转码（Router 选 codec） |
+| `RKVC_TEMPLATE_AV1_STORAGE` | `QUALITY` | 强制 AV1 SVT 存储档 |
+| `RKVC_TEMPLATE_LIVE_CAPTURE` | `REALTIME` | 低延迟 H.264（V4L2 待接） |
+
+```c
+rkvc_pipeline_desc rkvc_pipeline_desc_defaults(void);
+rkvc_err rkvc_pipeline_from_template(rkvc_pipeline_template tmpl,
+                                     rkvc_pipeline_desc *desc);
+```
+
+## Session
+
+```c
+typedef struct {
+    rkvc_route_plan route;
+    int             running;
+    uint64_t        frames_in, frames_out, frames_dropped;
+    double          avg_fps;
+} rkvc_session_stats;
+
+rkvc_err rkvc_session_create(const rkvc_pipeline_desc *desc, rkvc_session **out);
+rkvc_err rkvc_session_start(rkvc_session *session);
+rkvc_err rkvc_session_stop(rkvc_session *session);
+rkvc_err rkvc_session_get_route(const rkvc_session *session, rkvc_route_plan *plan);
+rkvc_port *rkvc_session_port(rkvc_session *session, const char *name);
+rkvc_err rkvc_session_get_stats(const rkvc_session *session, rkvc_session_stats *stats);
+void     rkvc_session_destroy(rkvc_session *session);
+
+/** 文件模板：阻塞跑完整条管线 */
+rkvc_err rkvc_session_run_file(rkvc_session *session);
+```
+
+### 文件转码示例
+
+```c
+rkvc_init();
+
+rkvc_pipeline_desc d;
+rkvc_pipeline_from_template(RKVC_TEMPLATE_FILE_TRANSCODE, &d);
+d.input_path  = "in.mp4";
+d.output_path = "out.mp4";
+d.policy      = RKVC_POLICY_BALANCED;
+d.bitrate     = 4000000;
+
+rkvc_session *s = NULL;
+rkvc_session_create(&d, &s);
+rkvc_session_run_file(s);
+rkvc_session_destroy(s);
+
+rkvc_deinit();
+```
+
+### 端口流式示例
+
+```c
+rkvc_pipeline_desc d;
+rkvc_pipeline_from_template(RKVC_TEMPLATE_FILE_ENCODE, &d);
+d.output_path = "out.mp4";
+d.width = 1920; d.height = 1080;
+
+rkvc_session *s;
+rkvc_session_create(&d, &s);
+rkvc_session_start(s);
+
+rkvc_port *capture = rkvc_session_port(s, "capture");
+for (int i = 0; i < 300; i++) {
+    rkvc_buffer *buf = NULL;
+    rkvc_buffer_alloc_video_host(&buf, 1920, 1080, RKVC_PIX_FMT_NV12);
+    rkvc_buffer_set_pts(buf, i);
+    // 填充像素 ...
+    rkvc_port_push(capture, buf);
+    rkvc_buffer_unref(buf);
 }
+
+rkvc_session_stop(s);
+rkvc_session_destroy(s);
 ```
 
-常见运行时错误包括：
-
-| 错误码                 | 含义                 |
-| ---------------------- | -------------------- |
-| `RKVC_ERR_AGAIN`       | 需要更多输入或输出满 |
-| `RKVC_ERR_PERMISSION`  | 设备节点权限不足     |
-| `RKVC_ERR_FORMAT`      | 输入格式不匹配       |
-| `RKVC_ERR_HW`          | 硬件初始化或执行失败 |
-
-### 帧管理
-
-`rkvc_frame` 使用引用计数管理生命周期：
+## Buffer
 
 ```c
-rkvc_frame *f = NULL;
-rkvc_frame_alloc(&f, 1920, 1080, RKVC_PIX_FMT_NV12);
-// 使用 f ...
-rkvc_frame_unref(f);  // 用完必须 unref
+typedef enum { RKVC_BUF_VIDEO, RKVC_BUF_BITSTREAM } rkvc_buffer_kind;
+typedef enum { RKVC_MEM_HOST, RKVC_MEM_DMABUF } rkvc_mem_type;
+
+rkvc_buffer *rkvc_buffer_ref(rkvc_buffer *buf);
+void         rkvc_buffer_unref(rkvc_buffer *buf);
+
+rkvc_err rkvc_buffer_alloc_video_host(rkvc_buffer **out,
+                                      int w, int h, rkvc_pix_fmt fmt);
+rkvc_err rkvc_buffer_alloc_bitstream(rkvc_buffer **out,
+                                     const uint8_t *data, size_t size, int copy);
+rkvc_err rkvc_buffer_get_video_planes(rkvc_buffer *buf,
+                                      uint8_t *planes[4], int strides[4]);
+rkvc_err rkvc_buffer_get_bitstream(const rkvc_buffer *buf,
+                                   rkvc_buffer_bitstream_view *view);
+rkvc_err rkvc_buffer_set_pts(rkvc_buffer *buf, int64_t pts);
 ```
 
-## 编码器
-
-### 离线文件编码
+## 上采样算法
 
 ```c
-rkvc_encoder *enc = NULL;
-rkvc_encoder_config cfg = rkvc_encoder_config_defaults();
-cfg.width = 1920; cfg.height = 1080;
-cfg.bitrate = 4000000;
+typedef enum {
+    RKVC_UPSCALE_NONE, RKVC_UPSCALE_NEAREST, RKVC_UPSCALE_BILINEAR,
+    RKVC_UPSCALE_BICUBIC,
+} rkvc_upscale_algo;
 
-rkvc_encoder_open_file(&enc, &cfg, "output.h265");
-rkvc_encoder_send_frame(enc, frame);
-rkvc_encoder_close(enc);
+int rkvc_upscale_algo_from_name(const char *name, rkvc_upscale_algo *out);
+const char *rkvc_upscale_algo_name(rkvc_upscale_algo algo);
 ```
-
-### 实时流编码 (无文件输出)
-
-```c
-rkvc_encoder_open(&enc, &cfg);  // 不带 _file
-
-rkvc_encoder_send_frame(enc, frame);
-
-rkvc_packet pkt;
-while (rkvc_encoder_receive_packet(enc, &pkt) == RKVC_OK) {
-    // pkt.data/pkt.size 有效，可发送到网络
-}
-rkvc_encoder_close(enc);
-```
-
-## 解码器
-
-### 输出像素格式
-
-`rkvc_decoder_config.output_format` 控制解码输出帧的像素格式，支持
-`RKVC_PIX_FMT_NV12` / `YUV420P` / `NV16` / `P010`。
-
-RKMPP 硬件对输出格式的支持受输入码流类型约束（8-bit HEVC 仅能直接输出
-NV12，10-bit 仅能输出 NV15 等）。当请求的格式硬件无法直接提供时，解码器
-内部自动通过 libswscale 进行软件像素格式转换，保证交付帧的格式严格等于
-配置值。NV12 走硬件直出无额外开销；其它格式引入一次软件转换的 CPU 开销。
-
-```c
-rkvc_decoder_config cfg = rkvc_decoder_config_defaults();
-cfg.output_format = RKVC_PIX_FMT_YUV420P;  // 请求 YUV420P 输出
-```
-
-### 离线文件解码
-
-```c
-rkvc_decoder *dec = NULL;
-rkvc_decoder_config cfg = rkvc_decoder_config_defaults();
-rkvc_decoder_open_file(&dec, &cfg, "input.h265");
-
-rkvc_frame *frame = NULL;
-while (rkvc_decoder_read_packet(dec) == RKVC_OK)
-    while (rkvc_decoder_receive_frame(dec, &frame) == RKVC_OK)
-        rkvc_frame_unref(frame);
-
-rkvc_decoder_close(dec);
-```
-
-### 实时流解码
-
-```c
-rkvc_decoder_open(&dec, &cfg);  // 不带 _file
-
-rkvc_decoder_send_packet(dec, data, size, pts, dts);
-
-rkvc_frame *frame = NULL;
-while (rkvc_decoder_receive_frame(dec, &frame) == RKVC_OK) {
-    // 处理解码帧
-    rkvc_frame_unref(frame);
-}
-rkvc_decoder_close(dec);
-```
-
-## 流式 API
-
-```c
-rkvc_stream *s = NULL;
-rkvc_stream_config scfg = rkvc_stream_config_defaults();
-scfg.direction = RKVC_STREAM_ENCODE;
-rkvc_stream_open(&s, &scfg);
-
-rkvc_stream_push(s, frame);
-
-rkvc_packet pkt;
-while (rkvc_stream_pull(s, &pkt, 0) == RKVC_OK) { /* ... */ }
-
-rkvc_stream_finish(s);
-rkvc_stream_close(s);
-```
-
-!!! warning "UDP 传输须知：编码帧可能超过 UDP 数据报大小"
-    硬件编码器输出的 **IDR 帧**（关键帧）可能达到 **80–120 KB**，远超单个 UDP 数据报上限 **65507 字节**。
-    如果通过 UDP 传输 `rkvc_packet.data`，必须自行实现**分片与重组**。
-
-    **示例**（参考 `examples/stream_device_pair.c`，通道 `udp`）：
-
-    | 协议头结构        | 字段                     |
-    | ----------------- | ------------------------ |
-    | `frag_id` (2B)    | 分片序号 (network order) |
-    | `frag_total` (2B) | 总分片数                 |
-    | `frame_len` (4B)  | 完整帧总长               |
-    | `pts` (8B)        | 时间戳 (big-endian)      |
-
-    发送端按 `UDP_FRAG_PAYLOAD = 65491` 字节分片，接收端按 `frag_mask` 位图收集并去重，全部到达后组装交付。
 
 ## CLI 工具
 
-### 编码
+| 工具 | 用途 |
+|------|------|
+| `rkvc_encode` | 原始 NV12 → MP4（`-p realtime\|balanced\|quality`） |
+| `rkvc_decode` | 容器/码流 → 原始 NV12 |
+| `rkvc_transcode` | 容器 → 容器，Router 选 codec |
+| `rkvc_bench` | 三档 policy E2E fps 对比 |
+| `rkvc_info` | 硬件能力查询（`-j` JSON） |
 
 ```bash
-# 离线文件
-rkvc_encode -i raw.nv12 -o out.h265 -s 1920x1080 -b 4M
+rkvc_encode -i raw.nv12 -o out.mp4 -s 1920x1080 -p balanced \
+  --rc-mode cbr -b 4000000 --enc-scale-denom 2 --post-upscale bilinear
 
-# 已编码的 .h265/.mp4 不是编码输入；请用 rkvc_decode 或转码示例
-
-# 测试图案
-rkvc_encode --testsrc -o out.h265 -s 1920x1080 -n 300
-
-# stdin 管道输入
-cat raw.nv12 | rkvc_encode --stdin -o out.h265 -s 1920x1080
-
-# stdout 管道输出 (用于管道连接)
-rkvc_encode --testsrc --stdout -s 640x480 -n 30 > out.h265
+rkvc_transcode -i in.mp4 -o out.mp4 -p quality -b 6000000
+rkvc_info -j
 ```
 
-### 解码
+## v1 → v2 迁移
 
-```bash
-# 离线文件
-rkvc_decode -i out.h265 -o decoded.nv12
+详见 [migration.md](migration.md)。
 
-# stdin 管道输入
-rkvc_decode --stdin -s 1920x1080 -o decoded.nv12 < out.h265
-
-# stdout 管道输出
-rkvc_decode --stdin --stdout -s 1920x1080 < out.h265 > decoded.nv12
-```
-
-### 管道组合
-
-```bash
-# 编码 → 解码 一步到位
-rkvc_encode --testsrc --stdout -s 640x480 -n 30 | \
-  rkvc_decode --stdin --stdout -s 640x480 > decoded.nv12
-
-# 验证: 编码→解码数据量应等于 W*H*1.5*帧数
-rkvc_encode --testsrc --stdout -s 640x480 -n 10 | \
-  rkvc_decode --stdin --stdout -s 640x480 | wc -c
-# 预期: 640*480*1.5*10 = 4608000
-```
-
-### 硬件能力查询
-
-```bash
-rkvc_info            # 文本输出
-rkvc_info --json     # JSON 输出 (适合脚本)
-rkvc_info --version  # 版本号
-```
+| v1 | v2 |
+|----|-----|
+| `rkvc_encoder_send_frame` | `rkvc_port_push(capture, buf)` 或 `rkvc_session_run_file` |
+| `rkvc_encoder_receive_packet` | `rkvc_port_pull(output, &buf, timeout)` |
+| `rkvc_decoder_receive_frame` | 解码模板 + `port_pull("output")` |
+| `rkvc_frame_alloc` | `rkvc_buffer_alloc_video_host` |
+| `rkvc_stream_push/pull` | Session 端口队列 |
+| `rkvc_encode --testsrc` | `example_encode_file` 或自备 NV12 输入 |

@@ -48,11 +48,25 @@ typedef enum {
 
 /* ── 码率控制模式 ──────────────────────────────────────────────────── */
 
+/** 与 MPP / FFmpeg rkmppenc rc_mode 数值一致 */
 typedef enum {
-    RKRC_CBR    = 0,            /**< 恒定码率 */
-    RKRC_VBR    = 1,            /**< 可变码率 */
-    RKRC_CQP    = 2,            /**< 恒定 QP */
+    RKVC_RC_VBR = 0,            /**< 可变码率 */
+    RKVC_RC_CBR = 1,            /**< 恒定码率 */
+    RKVC_RC_CQP = 2,            /**< 固定 QP (MPP FIXQP) */
 } rkvc_rc_mode;
+
+#define RKRC_VBR RKVC_RC_VBR
+#define RKRC_CBR RKVC_RC_CBR
+#define RKRC_CQP RKVC_RC_CQP
+
+/* ── 解码后上采样算法（RGA 硬件插值）──────────────────────────── */
+
+typedef enum {
+    RKVC_UPSCALE_NONE = 0,      /**< 不做后处理上采样 */
+    RKVC_UPSCALE_NEAREST,       /**< 最近邻 (RGA) */
+    RKVC_UPSCALE_BILINEAR,      /**< 双线性 (RGA) */
+    RKVC_UPSCALE_BICUBIC,       /**< 双三次 (RGA) */
+} rkvc_upscale_algo;
 
 #ifdef __cplusplus
 }

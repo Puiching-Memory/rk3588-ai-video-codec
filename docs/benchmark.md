@@ -1,35 +1,45 @@
 # 基准测试
 
-## 运行基准测试
+## RD 端到端对比（码率-画质）
+
+RK3588 上 H.264 / HEVC / SVT-AV1 / rkvc Session 的端到端 RD 与性能对比，见 **[bench/README.md](../bench/README.md)**。
 
 ```bash
-cd build
-./rkvc_bench --quick          # 快速测试 (120 帧)
-./rkvc_bench                  # 完整测试 (300 帧)
-./rkvc_bench --4k             # 4K 测试
-./rkvc_bench --stream         # 包含流式 API 测试
-./rkvc_bench --encode-only    # 仅编码测试
-./rkvc_bench -o results/run1  # 指定输出目录
+./scripts/run-bench.sh /path/to/1080p.mp4
+PLOT_ONLY=1 ./scripts/run-bench.sh
+RUN_CODECS=h264,rkvc-v2 ./scripts/run-bench.sh clip.mp4
 ```
 
-## 输出格式
+默认对比路线：`h264`、`h265`、`svt-av1`、`rkvc-v2`（展开为 realtime / balanced / quality 三档）。
 
-结果以 TSV 格式写入 `summary.tsv`：
+## rkvc_bench（Session E2E）
+
+v2 的 `rkvc_bench` 对同一输入文件分别跑 `REALTIME` / `BALANCED` / `QUALITY` 三档 policy 的完整转码管线，输出 E2E fps。
+
+```bash
+./build/rkvc_bench
+./build/rkvc_bench -i tests/fixtures/sample.h264.mp4
+./build/rkvc_bench -i clip.mp4 -o /tmp/bench_out -s 1920x1080
+```
+
+### 输出示例
 
 ```
-test      size        rate  frames  elapsed_s  fps    realtime  bpp     total_bytes
-encode    1920x1080   30    120     0.394      304.7  10.16     0.0056  ...
-decode    1920x1080   30    115     0.413      278.6  9.29      12.000  ...
-stream_enc 1920x1080  30    118     0.548      215.3  7.18      0.0057  ...
+rkvc v2 session E2E bench (input=tests/fixtures/sample.h264.mp4)
+  REALTIME (H.264): 36.2 fps
+  BALANCED (HEVC):  27.1 fps
+  QUALITY (AV1):    24.3 fps
 ```
 
-## RK3588 实测结果 (1080p)
+### RK3588 实测 (1080p E2E 转码)
 
-| 测试       | 帧率     | 实时倍率 | 说明            |
-| ---------- | -------- | -------- | --------------- |
-| H.265 编码 | ~290 fps | ~9.6x    | RKMPP 硬编码    |
-| H.265 解码 | ~270 fps | ~9.0x    | RKMPP 硬解码    |
-| 流式编码   | ~215 fps | ~7.2x    | 含 DMA 上传开销 |
+| policy | 路线 | E2E fps |
+|--------|------|---------|
+| `REALTIME` | H.264 RKMPP | ~36 |
+| `BALANCED` | HEVC RKMPP | ~27 |
+| `QUALITY` | SVT-AV1 + av1_rkmpp | ~24 |
+
+> v0.1.x 的 `--quick` / `--stream` / `--encode-only` 等选项已在 v2 移除；吞吐细分测试请使用 RD 套件或示例程序。
 
 ## 端到端延迟测试
 
@@ -38,9 +48,6 @@ stream_enc 1920x1080  30    118     0.548      215.3  7.18      0.0057  ...
 ```bash
 cd build
 
-# 默认: 1080p@30fps, 4Mbps, 300帧
-./example_latency_test
-
 # 低延迟模式 (推荐)
 ./example_latency_test -l
 
@@ -48,17 +55,38 @@ cd build
 ./example_latency_test -s 1280x720 -r 60 -n 600 -b 8000000 -l
 ```
 
-输出包含逐帧延迟明细和统计摘要（平均、P50、P95、P99）。
+输出逐帧延迟明细和统计摘要（平均、P50、P95、P99）。详见示例源码 `examples/latency_test.c`。
 
-### RK3588 延迟实测结果 (1080p, 低延迟模式)
+### RK3588 延迟实测 (1080p, 低延迟模式)
 
 | 指标 | 编码延迟 | 端到端延迟 |
 | ---- | -------- | ---------- |
-| 平均 | ~7 ms    | ~69 ms     |
-| P50  | ~7 ms    | ~76 ms     |
-| P95  | ~8 ms    | ~84 ms     |
-| 最大 | ~8 ms    | ~111 ms    |
+| 平均 | ~7 ms | ~69 ms |
+| P50 | ~7 ms | ~76 ms |
+| P95 | ~8 ms | ~84 ms |
+| 最大 | ~8 ms | ~111 ms |
 
-- **编码延迟**: 采集帧生成到编码包输出，RKMPP 硬编码 ~7ms
-- **端到端延迟**: 采集帧生成到解码帧输出，含编码器/解码器硬件流水线
-- 帧 0 延迟偏高 (~110ms) 为解码器初始化开销，稳态帧在 56-82ms 交替
+- **编码延迟**: 采集帧生成到编码包输出
+- **端到端延迟**: 采集帧生成到解码帧输出，含编解码器硬件流水线
+- 帧 0 延迟偏高 (~110ms) 为解码器初始化开销
+
+## PSNR 质量测试
+
+```bash
+./build/example_psnr_test -i input.mp4
+./build/example_psnr_test -i input.mp4 -v -n 100
+```
+
+输出 Y/U/V 平均 PSNR、加权平均 PSNR 及最低帧 PSNR。
+
+## 下采样 + 后处理上采样基准
+
+评估低分辨率编码 + 传统上采样还原的画质损失：
+
+```bash
+RUN_CODECS=svt-av1,post-upscale ./scripts/run-bench.sh clip.mp4
+ENC_SCALE_DENOM=2 UPSCALE_ALGOS=nearest,bilinear,bicubic \
+  RUN_CODECS=post-upscale ./scripts/run-bench.sh clip.mp4
+```
+
+rkvc Session 对应参数：`enc_scale_denom`、`post_upscale_algo`，或 CLI `--enc-scale-denom 2 --post-upscale bilinear`。

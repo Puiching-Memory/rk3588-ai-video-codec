@@ -1,52 +1,6 @@
 /**
  * @file rkvc.h
- * @brief RK3588 Video Codec Library — 公共 API 入口
- *
- * 基于 ffmpeg-rockchip 的 RKMPP 硬件加速 H.265 编解码 C 库，
- * 支持离线文件处理和实时流式处理。
- *
- * 典型用法（编码）:
- * @code
- *   rkvc_encoder *enc = NULL;
- *   rkvc_encoder_config cfg = rkvc_encoder_config_defaults();
- *   cfg.width = 1920; cfg.height = 1080;
- *   cfg.fps_num = 30; cfg.fps_den = 1;
- *   cfg.bitrate  = 4000000;
- *
- *   rkvc_err err = rkvc_encoder_open_file(&enc, &cfg, "output.h265");
- *   if (err != RKVC_OK) { ... }
- *
- *   // 送入原始帧 (NV12)
- *   rkvc_frame *frame = NULL;
- *   rkvc_frame_alloc(&frame, cfg.width, cfg.height, cfg.input_format);
- *   // 填充 frame 像素数据 ...
- *   err = rkvc_encoder_send_frame(enc, frame);
- *   rkvc_frame_unref(frame);
- *
- *   // 文件模式下 receive_packet 会自动写入 output.h265
- *   rkvc_packet pkt;
- *   while (rkvc_encoder_receive_packet(enc, &pkt) == RKVC_OK) {
- *   }
- *
- *   rkvc_encoder_close(enc);
- * @endcode
- *
- * 典型用法（流式）:
- * @code
- *   rkvc_stream *stream = NULL;
- *   rkvc_stream_config scfg = rkvc_stream_config_defaults();
- *   scfg.direction = RKVC_STREAM_ENCODE;
- *   scfg.width = 1920; scfg.height = 1080;
- *
- *   rkvc_stream_open(&stream, &scfg);
- *   rkvc_stream_push(stream, frame);
- *
- *   rkvc_packet pkt;
- *   while (rkvc_stream_pull(stream, &pkt, 0) == RKVC_OK) {
- *       // 处理 pkt.data, pkt.size
- *   }
- *   rkvc_stream_close(stream);
- * @endcode
+ * @brief RK3588 Video Codec Library v2 — Session / Pipeline API
  */
 
 #ifndef RKVC_H
@@ -56,77 +10,56 @@
 #include <stdint.h>
 
 #include "rkvc/types.h"
-#include "rkvc/frame.h"
-#include "rkvc/scale.h"
-#include "rkvc/encoder.h"
-#include "rkvc/decoder.h"
-#include "rkvc/stream.h"
+#include "rkvc/buffer.h"
+#include "rkvc/pipeline.h"
+#include "rkvc/policy.h"
+#include "rkvc/port.h"
+#include "rkvc/session.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/**
- * @brief 获取库版本字符串。
- */
 const char *rkvc_version(void);
-
-/**
- * @brief 获取库版本号 (major << 16 | minor << 8 | patch)。
- */
 uint32_t rkvc_version_number(void);
 
-/**
- * @brief 初始化全局资源（线程安全，可多次调用）。
- *
- * 内部初始化 FFmpeg 网络、锁等全局子系统。
- * 也可由各子模块自动懒初始化。
- */
 rkvc_err rkvc_init(void);
-
-/**
- * @brief 释放全局资源。
- */
 void rkvc_deinit(void);
-
-/**
- * @brief 将错误码转换为可读字符串。
- */
 const char *rkvc_err_str(rkvc_err err);
 
-/**
- * @brief 输入数据格式探测结果。
- */
 typedef enum {
-    RKVC_INPUT_UNKNOWN = 0,     /**< 未知或未能可靠识别 */
-    RKVC_INPUT_RAW_VIDEO,       /**< 原始视频像素数据 */
-    RKVC_INPUT_COMPRESSED_VIDEO,/**< H.264/H.265 或常见视频容器 */
+    RKVC_INPUT_UNKNOWN = 0,
+    RKVC_INPUT_RAW_VIDEO,
+    RKVC_INPUT_COMPRESSED_VIDEO,
 } rkvc_input_format_probe;
 
-/**
- * @brief 基于文件头探测输入数据类型。
- *
- * 该函数不会解析完整码流，只识别明确的 magic / start code。
- */
 rkvc_input_format_probe rkvc_probe_input_format(const uint8_t *data,
                                                 size_t size);
 
-/**
- * @brief 运行时能力查询。
- */
 typedef struct {
-    int has_rkmpp_enc;   /**< RKMPP 编码器可用 */
-    int has_rkmpp_dec;   /**< RKMPP 解码器可用 */
-    int has_dma_heap;    /**< /dev/dma_heap/* 可由当前用户访问 */
-    int has_rga;         /**< RGA 2D 加速可用 */
-    int max_width;       /**< 硬件支持的最大宽度 */
-    int max_height;      /**< 硬件支持的最大高度 */
+    int has_h264_enc;
+    int has_hevc_enc;
+    int has_av1_enc;      /**< SVT-AV1 */
+    int has_h264_dec;
+    int has_hevc_dec;
+    int has_av1_dec;
+    int has_dma_heap;
+    int has_rga;
+    int max_width;
+    int max_height;
 } rkvc_caps;
 
-/**
- * @brief 查询运行时硬件能力。
- */
 rkvc_err rkvc_query_caps(rkvc_caps *caps);
+rkvc_err rkvc_check_hw_permissions(void);
+
+int rkvc_upscale_algo_from_name(const char *name, rkvc_upscale_algo *out);
+const char *rkvc_upscale_algo_name(rkvc_upscale_algo algo);
+
+/** YUV420p 平面缓冲上采样（RGA 硬件）。 */
+rkvc_err rkvc_upscale_yuv420p(const uint8_t *src, uint8_t *dst,
+                              int src_w, int src_h,
+                              int dst_w, int dst_h,
+                              rkvc_upscale_algo algo);
 
 #ifdef __cplusplus
 }

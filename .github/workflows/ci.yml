@@ -78,22 +78,16 @@ jobs:
           cmake --build /tmp/mpp-build -j$(nproc)
           cmake --install /tmp/mpp-build
 
-      - name: Build ffmpeg-rockchip
+      - name: Build SVT-AV1 submodule
         run: |
-          cd third_party/ffmpeg-rockchip
-          export PKG_CONFIG_PATH=/tmp/mpp-install/lib/pkgconfig:$PKG_CONFIG_PATH
-          ./configure --enable-pic --enable-version3 --disable-everything \
-            --disable-doc --disable-programs \
-            --disable-avdevice --disable-avfilter --disable-postproc \
-            --enable-swscale --disable-swresample --disable-network \
-            --enable-rkmpp --enable-libdrm \
-            --enable-encoder=hevc_rkmpp \
-            --enable-decoder=hevc_rkmpp --enable-decoder=hevc \
-            --enable-muxer=hevc --enable-muxer=matroska --enable-muxer=mp4 --enable-muxer=mpegts \
-            --enable-demuxer=hevc --enable-demuxer=matroska --enable-demuxer=mov --enable-demuxer=mpegts \
-            --enable-parser=hevc \
-            --enable-protocol=file --enable-protocol=pipe
-          make -j$(nproc)
+          git submodule update --init --depth 1 third_party/SVT-AV1
+          chmod +x scripts/build-svt.sh
+          ./scripts/build-svt.sh
+
+      - name: Build ffmpeg-rockchip (av1 decode)
+        run: |
+          chmod +x scripts/rebuild-ffmpeg-av1.sh
+          MPP_PREFIX=/tmp/mpp-install scripts/rebuild-ffmpeg-av1.sh
 
       - name: Configure
         run: |
@@ -148,22 +142,16 @@ jobs:
           cmake --build /tmp/mpp-build -j$(nproc)
           cmake --install /tmp/mpp-build
 
-      - name: Build ffmpeg-rockchip
+      - name: Build SVT-AV1 submodule
         run: |
-          cd third_party/ffmpeg-rockchip
-          export PKG_CONFIG_PATH=/tmp/mpp-install/lib/pkgconfig:$PKG_CONFIG_PATH
-          ./configure --enable-pic --enable-version3 --disable-everything \
-            --disable-doc --disable-programs \
-            --disable-avdevice --disable-avfilter --disable-postproc \
-            --enable-swscale --disable-swresample --disable-network \
-            --enable-rkmpp --enable-libdrm \
-            --enable-encoder=hevc_rkmpp \
-            --enable-decoder=hevc_rkmpp --enable-decoder=hevc \
-            --enable-muxer=hevc --enable-muxer=matroska --enable-muxer=mp4 --enable-muxer=mpegts \
-            --enable-demuxer=hevc --enable-demuxer=matroska --enable-demuxer=mov --enable-demuxer=mpegts \
-            --enable-parser=hevc \
-            --enable-protocol=file --enable-protocol=pipe
-          make -j$(nproc)
+          git submodule update --init --depth 1 third_party/SVT-AV1
+          chmod +x scripts/build-svt.sh
+          ./scripts/build-svt.sh
+
+      - name: Build ffmpeg-rockchip (av1 decode)
+        run: |
+          chmod +x scripts/rebuild-ffmpeg-av1.sh
+          MPP_PREFIX=/tmp/mpp-install scripts/rebuild-ffmpeg-av1.sh
 
       - name: Build and package
         run: |

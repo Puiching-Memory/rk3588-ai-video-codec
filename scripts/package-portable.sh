@@ -16,9 +16,14 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+# shellcheck source=build-common.sh
+source "$SCRIPT_DIR/build-common.sh"
+rkvc_limit_build_jobs
+
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 FFMPEG_SRC="$PROJECT_DIR/third_party/ffmpeg-rockchip"
 MPP_SRC="$PROJECT_DIR/third_party/mpp"
+SVT_PREFIX="$PROJECT_DIR/build-deps/svt-av1-install"
 FFMPEG_PREFIX="$PROJECT_DIR/build-deps/ffmpeg-install"
 MPP_BUILD="$PROJECT_DIR/build-deps/mpp-build"
 MPP_PREFIX="$PROJECT_DIR/build-deps/mpp-install"
@@ -92,58 +97,25 @@ build_mpp() {
 
     cmake -S "$MPP_SRC" -B "$MPP_BUILD" -G "$gen" \
         -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_BUILD_PARALLEL_LEVEL="$BUILD_JOBS" \
         -DBUILD_TEST=OFF \
         -DCMAKE_INSTALL_PREFIX="$MPP_PREFIX"
 
     local build_cmd
     build_cmd="$(detect_build_cmd "$MPP_BUILD")"
-    $build_cmd -C "$MPP_BUILD"
+    $build_cmd -C "$MPP_BUILD" -j"$BUILD_JOBS"
     $build_cmd -C "$MPP_BUILD" install
 
     echo "--- rockchip-mpp 构建完成 ---"
 }
 
+build_svt() {
+    "$SCRIPT_DIR/build-svt.sh" ${CLEAN:+--clean}
+}
+
 build_ffmpeg() {
-    echo "=== 构建 ffmpeg-rockchip ==="
-
-    if [[ $CLEAN -eq 1 ]]; then
-        rm -rf "$FFMPEG_PREFIX"
-    fi
-
-    if [[ -f "$FFMPEG_PREFIX/lib/libavcodec.so" ]]; then
-        echo "--- ffmpeg 已构建，跳过 (用 --clean 重建) ---"
-        return
-    fi
-
-    echo "--- 编译 ffmpeg ---"
-    cd "$FFMPEG_SRC"
-
-    export PKG_CONFIG_PATH="$MPP_PREFIX/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
-    export LD_LIBRARY_PATH="$MPP_PREFIX/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
-
-    ./configure \
-        --prefix="$FFMPEG_PREFIX" \
-        --enable-gpl --enable-version3 --enable-nonfree \
-        --enable-rkmpp --enable-libdrm \
-        --enable-pic \
-        --enable-static --enable-shared \
-        --disable-doc --disable-programs --disable-network \
-        --enable-swscale --disable-swresample \
-        --disable-x86asm \
-        --disable-everything \
-        --enable-encoder=hevc_rkmpp \
-        --enable-decoder=hevc_rkmpp --enable-decoder=hevc \
-        --enable-muxer=hevc --enable-muxer=matroska --enable-muxer=mp4 --enable-muxer=mpegts \
-        --enable-demuxer=hevc --enable-demuxer=matroska --enable-demuxer=mov --enable-demuxer=mpegts \
-        --enable-parser=hevc \
-        --enable-protocol=file --enable-protocol=pipe \
-        2>&1 | tail -3
-
-    make -j"$(nproc)" 2>&1 | tail -3
-    make install 2>&1 | tail -3
-
-    echo "--- ffmpeg 构建完成 ---"
-    cd "$PROJECT_DIR"
+    echo "=== 构建 ffmpeg-rockchip (AV1 硬解) ==="
+    "$SCRIPT_DIR/rebuild-ffmpeg-rkmpp.sh" ${CLEAN:+--clean} --prefix "$FFMPEG_PREFIX"
 }
 
 build_rkvc() {
@@ -157,13 +129,14 @@ build_rkvc() {
 
     cmake -B "$RKVC_BUILD" -G "$gen" \
         -DCMAKE_BUILD_TYPE=Release \
+        -DCMAKE_BUILD_PARALLEL_LEVEL="$BUILD_JOBS" \
         -DCMAKE_INSTALL_RPATH_USE_LINK_PATH=ON \
         -DMPP_BUILD_DIR="$MPP_BUILD" \
         "$PROJECT_DIR"
 
     local build_cmd
     build_cmd="$(detect_build_cmd)"
-    $build_cmd -C "$RKVC_BUILD"
+    $build_cmd -C "$RKVC_BUILD" -j"$BUILD_JOBS"
     echo "--- rkvc 构建完成 ---"
 }
 
@@ -174,7 +147,7 @@ package() {
     rm -rf "$OUT_DIR/$PKG_NAME"
     mkdir -p "$OUT_DIR/$PKG_NAME"/{bin,lib,include/rkvc,share/pkgconfig,examples/bin,examples/src}
 
-    for tool in rkvc_encode rkvc_decode rkvc_info rkvc_bench; do
+    for tool in rkvc_encode rkvc_decode rkvc_info rkvc_bench rkvc_transcode; do
         [[ -f "$RKVC_BUILD/$tool" ]] && cp "$RKVC_BUILD/$tool" "$OUT_DIR/$PKG_NAME/bin/"
     done
 
@@ -207,6 +180,14 @@ package() {
         # 取最大版本号的真实文件
         local lib
         lib="$(ls -1 "$FFMPEG_PREFIX/lib/${name}.so."* 2>/dev/null | grep -v '\.so$' | sort -V | tail -1)"
+        [[ -f "$lib" ]] || continue
+        [[ -L "$lib" ]] && continue
+        cp "$lib" "$OUT_DIR/$PKG_NAME/lib/"
+        echo "  $(basename "$lib")"
+    done
+
+    echo "--- 复制 SVT-AV1 动态库 ---"
+    for lib in "$SVT_PREFIX/lib"/libSvtAv1Enc.so.*; do
         [[ -f "$lib" ]] || continue
         [[ -L "$lib" ]] && continue
         cp "$lib" "$OUT_DIR/$PKG_NAME/lib/"
@@ -269,6 +250,12 @@ package() {
         patchelf --set-rpath '$ORIGIN' "$lib" && \
             echo "  $(basename "$lib")"
     done
+    for lib in "$OUT_DIR/$PKG_NAME/lib/"libSvtAv1Enc.so.*; do
+        [[ -f "$lib" ]] || continue
+        [[ -L "$lib" ]] && continue
+        patchelf --set-rpath '$ORIGIN' "$lib" && \
+            echo "  $(basename "$lib")"
+    done
     for lib in "$OUT_DIR/$PKG_NAME/lib/"librockchip*.so.*; do
         [[ -f "$lib" ]] || continue
         [[ -L "$lib" ]] && continue
@@ -282,7 +269,7 @@ prefix=\${pcfiledir}/../..
 libdir=\${prefix}/lib
 includedir=\${prefix}/include
 Name: rkvc
-Description: RK3588 H.265 Video Codec Library (RKMPP)
+Description: RK3588 AV1 Video Codec Library (SVT-AV1 + av1_rkmpp)
 Version: $VERSION
 Libs: -L\${libdir} -lrkvc
 Cflags: -I\${includedir}
@@ -300,6 +287,8 @@ EOF
     cp "$PROJECT_DIR/scripts/test-portable.sh" "$OUT_DIR/$PKG_NAME/test.sh"
     chmod +x "$OUT_DIR/$PKG_NAME/test.sh"
     echo "  test.sh"
+    cp "$PROJECT_DIR/scripts/portable-test-helpers.sh" "$OUT_DIR/$PKG_NAME/portable-test-helpers.sh"
+    echo "  portable-test-helpers.sh"
     cp "$PROJECT_DIR/scripts/network-e2e-test.sh" "$OUT_DIR/$PKG_NAME/network-e2e-test.sh"
     chmod +x "$OUT_DIR/$PKG_NAME/network-e2e-test.sh"
     echo "  network-e2e-test.sh"
@@ -322,7 +311,7 @@ EOF
         fi
     done <<< "$ldd_output"
 
-    for lib in librkvc libavcodec libavformat libavutil libswscale librockchip_mpp; do
+    for lib in librkvc libavcodec libavformat libavutil libswscale libSvtAv1Enc librockchip_mpp; do
         if echo "$ldd_output" | grep -q "$lib"; then
             if echo "$ldd_output" | grep "$lib" | grep -vq "$OUT_DIR/$PKG_NAME/lib/"; then
                 echo "  错误: $lib 未解析到包内 lib/"
@@ -350,6 +339,7 @@ main() {
     echo "=== 可移植包构建 (rkvc $VERSION, $ARCH) ==="
     check_deps
     build_mpp
+    build_svt
     build_ffmpeg
     build_rkvc
     package

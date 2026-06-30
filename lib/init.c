@@ -254,17 +254,20 @@ rkvc_err rkvc_query_caps(rkvc_caps *caps)
     rkvc_err hw_perm = rkvc_check_hw_permissions();
     int hw_usable = (hw_perm == RKVC_OK);
 
-    /* 检查 RKMPP 编码器 */
-    const AVCodec *enc = avcodec_find_encoder_by_name("hevc_rkmpp");
-    caps->has_rkmpp_enc = (enc != NULL && hw_usable);
+    caps->has_h264_enc = (avcodec_find_encoder_by_name("h264_rkmpp") != NULL
+                          && hw_usable);
+    caps->has_hevc_enc = (avcodec_find_encoder_by_name("hevc_rkmpp") != NULL
+                          && hw_usable);
+    caps->has_av1_enc  = 1; /* SVT-AV1 submodule */
 
-    /* 检查 RKMPP 解码器 */
-    const AVCodec *dec = avcodec_find_decoder_by_name("hevc_rkmpp");
-    caps->has_rkmpp_dec = (dec != NULL && hw_usable);
+    caps->has_h264_dec = (avcodec_find_decoder_by_name("h264_rkmpp") != NULL
+                          && hw_usable);
+    caps->has_hevc_dec = (avcodec_find_decoder_by_name("hevc_rkmpp") != NULL
+                          && hw_usable);
+    caps->has_av1_dec  = (avcodec_find_decoder_by_name("av1_rkmpp") != NULL
+                          && hw_usable);
 
     caps->has_dma_heap = mpp_default_dma_heap_accessible();
-
-    /* 检查 /dev/rga */
     caps->has_rga = (rkvc_dev_access("/dev/rga", R_OK | W_OK) == 0);
 
     /* RK3588 最大分辨率 */

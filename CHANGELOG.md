@@ -2,6 +2,95 @@
 
 本文档记录 rkvc 各版本的主要变更。
 
+## [0.2.0] - 2026-06-30
+
+### 发布重点
+
+- **rkvc v2 破坏性升级**：移除 v1 `encoder` / `decoder` / `stream` / `frame` / `scale` API，统一为 **Session + Pipeline + Codec Router** 架构。
+- **多码率策略路由**：`REALTIME`→H.264 RKMPP、`BALANCED`→HEVC RKMPP、`QUALITY`→SVT-AV1 编码 + `av1_rkmpp` 硬解。
+- **可移植包重建**：`rkvc-0.2.0-linux-aarch64-portable.tar.gz`（约 4.5 MB），随包携带 `libSvtAv1Enc.so.4`、更新后的 ffmpeg-rockchip（含 AV1 硬解）与 rockchip-mpp；`test.sh` 自测 **92 项全过**。
+- **RD 基准套件**：`bench/` 与 `scripts/run-bench.sh`，支持 H.264 / HEVC / SVT-AV1 / rkvc v2 端到端码率-画质对比。
+
+### 破坏性变更
+
+- **公共 API 全面替换**
+  - 删除：`include/rkvc/encoder.h`、`decoder.h`、`stream.h`、`frame.h`、`scale.h` 及对应 `lib/*.c` 实现。
+  - 新增：`buffer.h`（DMA-BUF 统一缓冲）、`pipeline.h`（管线模板）、`policy.h`（Codec Router）、`port.h`（命名端口）、`session.h`（会话生命周期）。
+  - 核心入口：`rkvc_session_create()` + `rkvc_session_run_file()` / `rkvc_session_port()`；文件编解码/转码通过 `rkvc_pipeline_from_template()` 配置。
+- **CLI 行为变更**
+  - `rkvc_encode`：仅接受原始 NV12 文件输入（`-i raw.nv12`），移除 `--testsrc` / `--stdin` / `--stdout`；输出默认为 MP4 容器。
+  - `rkvc_decode`：`-i` 接受容器/码流文件，`-o` 输出原始 NV12；移除管道模式。
+  - `rkvc_info --json`：字段由 `rkmpp_enc/dec` 改为 `h264_enc`、`hevc_enc`、`av1_enc`、`h264_dec`、`hevc_dec`、`av1_dec`。
+  - 新增 `rkvc_transcode`：`-p realtime|balanced|quality` 一键转码。
+
+### 新增
+
+- **Codec Router 与管线节点**
+  - `lib/router.c`：按 `rkvc_policy` / 分辨率解析 `rkvc_route_plan`（MPP / SVT 后端选择）。
+  - 节点图：`node_demux` / `node_mux` / `node_mpp_dec` / `node_mpp_enc` / `node_svt_enc` / `node_rga` / `node_dma_to_host` / `node_post_upscale`。
+  - 模板：`FILE_ENCODE`、`FILE_DECODE`、`FILE_TRANSCODE`、`LIVE_CAPTURE`（占位）、`AV1_STORAGE`。
+
+- **SVT-AV1 集成**
+  - 子模块 `third_party/SVT-AV1/`，构建脚本 `scripts/build-svt.sh`。
+  - `QUALITY` 策略走 SVT-AV1 软件编码 + `av1_rkmpp` 硬件解码。
+
+- **ffmpeg-rockchip 重建**
+  - `scripts/rebuild-ffmpeg-rkmpp.sh`：启用 H.264/HEVC/AV1 RKMPP 编解码。
+  - 可移植包携带 `libavcodec` / `libavformat` / `libavutil` / `libswscale` 及 `libSvtAv1Enc`。
+
+- **RD 基准测试（bench/）**
+  - `scripts/run-bench.sh`：端到端 PSNR/SSIM/码率/fps 采样与 RD 曲线绘制。
+  - 默认对比 H.264 RKMPP、HEVC RKMPP、纯 SVT-AV1、rkvc v2 三路策略。
+
+- **构建辅助**
+  - `scripts/build-common.sh`：统一编译并行度上限（默认 4）。
+  - `scripts/portable-test-helpers.sh`：可移植包测试共用 NV12 生成与编码辅助。
+
+### 变更
+
+- 版本号升至 **0.2.0**（`CMakeLists.txt` `project(VERSION)` 为唯一来源）。
+- `scripts/package-portable.sh`：打包 `rkvc_transcode`；复制 `libSvtAv1Enc` 并设置 RPATH；附带 `portable-test-helpers.sh`。
+- `scripts/test-portable.sh`：适配 v2 头文件、JSON 字段、Session 编解码流程；新增 `rkvc_transcode` 与 `rkvc_bench` session E2E 短测；共 **92 项**。
+- `scripts/network-e2e-test.sh`：改为 v2 冒烟测试（码流生成 + `stream_device_pair` 占位验证）；完整 UDP/RTP 回环待 `LIVE_CAPTURE` 模板接入后恢复。
+- `examples/stream_device_pair.c`：v2 占位，提示 LiveCapture/V4L2 待接。
+- 所有示例程序改写为 Session API（`encode_file` 内置测试图案生成等）。
+
+### 测试
+
+- CMocka / CTest 用例全面改写为 v2 Session / Router / Buffer 测试；硬件测试通过 `RKVC_RUN_HARDWARE_TESTS=1` 串行执行。
+- **可移植包完整测试**：`rkvc-0.2.0-linux-aarch64-portable.tar.gz` 解压后 `./test.sh` **92 项 / 0 失败**；覆盖文件完整性、RPATH 自包含、`rkvc_info` JSON、NV12 编码→MP4 解码→NV12 转码、`rkvc_bench` 三策略短测、pkg-config 最小程序、负向包结构检测。
+- `network-e2e-test.sh`：码流生成 + `stream_device_pair` 冒烟通过；UDP/RTP 完整回环标记为后续版本。
+
+### 迁移提示（v0.1.x → v0.2.0）
+
+```c
+// v0.1.x
+rkvc_encoder *enc = rkvc_encoder_open(&cfg);
+rkvc_encoder_send_frame(enc, frame);
+rkvc_encoder_drain(enc);
+
+// v0.2.0
+rkvc_pipeline_desc d;
+rkvc_pipeline_from_template(RKVC_TEMPLATE_FILE_ENCODE, &d);
+d.input_path = "raw.nv12";
+d.output_path = "out.mp4";
+d.policy = RKVC_POLICY_REALTIME;
+rkvc_session *s;
+rkvc_session_create(&d, &s);
+rkvc_session_run_file(s);
+rkvc_session_destroy(s);
+```
+
+```bash
+# v0.1.x
+rkvc_encode --testsrc -o test.h265 -s 1920x1080 -n 100
+
+# v0.2.0
+./examples/bin/example_encode_file -o test.mp4 -s 1920x1080 -n 100
+# 或
+rkvc_encode -i raw.nv12 -o out.mp4 -s 1920x1080 -p realtime
+```
+
 ## [0.1.6] - 2026-06-23
 
 ### 发布重点

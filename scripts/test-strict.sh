@@ -3,9 +3,14 @@
 set -euo pipefail
 
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=build-common.sh
+source "$SCRIPT_DIR/build-common.sh"
+rkvc_limit_build_jobs
+
 COVERAGE_MIN_LINE=${RKVC_COVERAGE_MIN_LINE:-0}
 COVERAGE_MIN_BRANCH=${RKVC_COVERAGE_MIN_BRANCH:-0}
-VALGRIND_HARDWARE=${RKVC_VALGRIND_HARDWARE:-1}
+VALGRIND_HARDWARE=${RKVC_VALGRIND_HARDWARE:-0}
 
 run_matrix() {
     local preset="$1"
@@ -17,10 +22,10 @@ run_matrix() {
     cmake --preset "$preset"
 
     echo "==> build: $preset"
-    cmake --build --preset "$preset" -j"$(nproc)"
+    cmake --build --preset "$preset" -j"$BUILD_JOBS"
 
     echo "==> test: $preset"
-    ctest --preset "$preset" --output-on-failure
+    ctest --preset "$preset" -j1 --output-on-failure
 }
 
 cd "$ROOT_DIR"
@@ -34,9 +39,11 @@ if command -v valgrind >/dev/null 2>&1; then
     mapfile -t TEST_BINS < <(find "$ROOT_DIR/build-tests" -maxdepth 1 -type f -perm -111 -name 'test_*' | sort)
     for test_bin in "${TEST_BINS[@]}"; do
         test_name="$(basename "$test_bin")"
-        if [ "$test_name" = "test_hardware" ] && [ "$VALGRIND_HARDWARE" != "1" ]; then
-            echo "==> skipping valgrind: test_hardware (set RKVC_VALGRIND_HARDWARE=1 to include third-party RKMPP stack)"
-            continue
+        if [ "$test_name" = "test_hardware" ] || [ "$test_name" = "test_scale" ]; then
+            if [ "$VALGRIND_HARDWARE" != "1" ]; then
+                echo "==> skipping valgrind: $test_name (RKMPP/RGA/SVT; set RKVC_VALGRIND_HARDWARE=1 to enable)"
+                continue
+            fi
         fi
         echo "==> valgrind: $test_name"
         VALGRIND_SUPP="$ROOT_DIR/scripts/mpp.supp"

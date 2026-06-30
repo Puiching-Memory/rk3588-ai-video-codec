@@ -178,8 +178,8 @@ static void test_query_caps_reflects_permission_gate(void **state)
     add_default_dma_heaps();
 
     assert_int_equal(rkvc_query_caps(&caps), RKVC_OK);
-    assert_int_equal(caps.has_rkmpp_enc, 0);
-    assert_int_equal(caps.has_rkmpp_dec, 0);
+    assert_int_equal(caps.has_av1_enc, 1);
+    assert_int_equal(caps.has_h264_dec, 0);
     assert_int_equal(caps.has_dma_heap, 1);
 }
 

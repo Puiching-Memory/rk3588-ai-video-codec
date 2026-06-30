@@ -269,20 +269,9 @@ int rkvc_is_valid_preset(rkvc_preset preset)
 int rkvc_is_valid_rc_mode(rkvc_rc_mode mode)
 {
     switch (mode) {
-    case RKRC_CBR:
-    case RKRC_VBR:
-    case RKRC_CQP:
-        return 1;
-    default:
-        return 0;
-    }
-}
-
-int rkvc_is_valid_stream_dir(rkvc_stream_dir dir)
-{
-    switch (dir) {
-    case RKVC_STREAM_ENCODE:
-    case RKVC_STREAM_DECODE:
+    case RKVC_RC_CBR:
+    case RKVC_RC_VBR:
+    case RKVC_RC_CQP:
         return 1;
     default:
         return 0;
@@ -308,32 +297,10 @@ rkvc_pix_fmt rkvc_from_av_pix_fmt(enum AVPixelFormat fmt)
     case AV_PIX_FMT_NV12:    return RKVC_PIX_FMT_NV12;
     case AV_PIX_FMT_YUV420P: return RKVC_PIX_FMT_YUV420P;
     case AV_PIX_FMT_NV16:    return RKVC_PIX_FMT_NV16;
-    case AV_PIX_FMT_P010:    return RKVC_PIX_FMT_P010;
+    case AV_PIX_FMT_P010LE:
+    case AV_PIX_FMT_P010BE:  return RKVC_PIX_FMT_P010;
     default:                  return RKVC_PIX_FMT_NV12;
     }
 }
 
-/* ── 帧包装 ────────────────────────────────────────────────────────── */
-
-rkvc_frame *rkvc_frame_wrap_avframe(AVFrame *av_frame)
-{
-    if (!av_frame)
-        return NULL;
-
-    rkvc_frame *f = rkvc_calloc(1, sizeof(*f));
-    if (!f)
-        return NULL;
-
-    f->av_frame  = av_frame;
-    f->ref_count = 1;
-    pthread_mutex_init(&f->lock, NULL);
-
-    /* 填充元数据 */
-    f->info.width     = av_frame->width;
-    f->info.height    = av_frame->height;
-    f->info.format    = rkvc_from_av_pix_fmt(av_frame->format);
-    f->info.pts       = av_frame->pts;
-    f->info.key_frame = (av_frame->flags & AV_FRAME_FLAG_KEY) != 0;
-
-    return f;
-}
+/* end utils */

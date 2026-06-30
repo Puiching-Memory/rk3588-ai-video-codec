@@ -80,36 +80,43 @@
         {
             "name": "default",
             "configurePreset": "default",
-            "targets": ["rkvc_shared", "rkvc_static", "rkvc_bench", "rkvc_encode", "rkvc_decode", "rkvc_info"]
+            "jobs": 4,
+            "targets": ["rkvc_shared", "rkvc_static", "rkvc_bench", "rkvc_encode", "rkvc_decode", "rkvc_transcode", "rkvc_info"]
         },
         {
             "name": "tests",
             "configurePreset": "tests",
+            "jobs": 4,
             "targets": ["check"]
         },
         {
             "name": "asan",
             "configurePreset": "asan",
+            "jobs": 4,
             "targets": ["check"]
         },
         {
             "name": "full-tests",
             "configurePreset": "full-tests",
+            "jobs": 4,
             "targets": ["check"]
         },
         {
             "name": "coverage",
             "configurePreset": "coverage",
+            "jobs": 4,
             "targets": ["check"]
         },
         {
             "name": "docs",
             "configurePreset": "default",
+            "jobs": 4,
             "targets": ["docs"]
         },
         {
             "name": "package",
             "configurePreset": "default",
+            "jobs": 4,
             "targets": ["package"]
         }
     ],

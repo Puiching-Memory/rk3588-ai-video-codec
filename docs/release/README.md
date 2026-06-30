@@ -1,22 +1,24 @@
-# rkvc — RK3588 视频编解码库
+# rkvc — RK3588 多码率视频编解码库
 
-高性能硬件视频编解码库，专为 RK3588 平台优化。
+高性能硬件视频编解码库，专为 RK3588 平台优化。支持 H.264 / HEVC / AV1 三族编解码，通过 Codec Router 按场景自动选型。
+
+**版本**: 0.2.0
 
 ## 功能特性
 
-- **硬件视频编码** — 支持 8K 分辨率，异步编码
-- **硬件视频解码** — 支持 8K 10-bit 解码
-- **离线处理** — 文件输入/输出，自动封装/解封装
-- **实时流式处理** — 帧级 push/pull API，适合监控/推流场景
-- **硬件加速缩放** — 零 CPU 占用的分辨率转换和格式转换
+- **多码率策略** — REALTIME (H.264) / BALANCED (HEVC) / QUALITY (AV1)
+- **硬件加速** — RKMPP 硬编硬解，支持 8K
+- **SVT-AV1** — QUALITY 策略软件编码 + av1_rkmpp 硬解
+- **Session API** — 统一文件/流式编解码接口
+- **RGA 缩放** — 硬件下采样 + 传统上采样后处理
 
-## 性能
+## 性能 (1080p E2E)
 
-| 测试类型 | 帧率     | 实时倍率 |
-| -------- | -------- | -------- |
-| 视频编码 | ~290 fps | ~9.6x    |
-| 视频解码 | ~270 fps | ~9.0x    |
-| 流式编码 | ~215 fps | ~7.2x    |
+| policy | E2E fps |
+|--------|---------|
+| REALTIME (H.264) | ~36 |
+| BALANCED (HEVC) | ~27 |
+| QUALITY (AV1) | ~24 |
 
 ## 环境要求
 
@@ -25,8 +27,7 @@
 
 ## 设备权限
 
-运行前需要设置设备权限。如遇权限错误，请联系技术支持配置。
-程序会在启动硬件编解码前检测必要设备权限；权限不足时会返回明确的权限错误，便于部署排查。
+运行前需要设置设备权限。权限不足时程序返回 `RKVC_ERR_PERMISSION`。
 
 ## 快速使用
 
@@ -36,82 +37,58 @@
 ./test.sh
 ```
 
-自测会检查二进制完整性、动态库依赖、硬件能力查询、小规模编解码流程以及本机网络回环。
+自测 92 项：二进制完整性、RPATH、`rkvc_info` JSON、NV12 编码→解码→转码、`rkvc_bench` 三策略短测、pkg-config 编译、负向包检查。
 
-### 本机网络端到端测试
+### 网络冒烟测试
 
 ```bash
 ./network-e2e-test.sh
 ```
 
-该测试会生成短测试码流，通过 `127.0.0.1` UDP 回环模拟网络传输，再由接收端解码并校验帧数。
-也可切换 RTP 或同时测试两种模式：
-
-```bash
-./network-e2e-test.sh --mode rtp
-./network-e2e-test.sh --mode both --frames 30
-```
+v2 版本生成短测试码流并验证 `stream_device_pair` 占位；完整 UDP/RTP 回环待 LiveCapture 模板接入。
 
 ### 硬件能力查询
 
 ```bash
-rkvc_info
+./bin/rkvc_info -j
 ```
 
-### 编码示例
+### 转码示例
 
 ```bash
-# 测试图案编码
-rkvc_encode --testsrc -o test.h265 -s 1920x1080 -n 100
+./bin/rkvc_transcode -i in.mp4 -o out.mp4 -p balanced
 ```
 
-### 解码示例
+### 编码示例（需原始 NV12）
 
 ```bash
-# 解码到原始 NV12 格式
-rkvc_decode -i test.h265 -o decoded.nv12
-```
-
-### 管道模式
-
-```bash
-# 编码 → 解码管道
-rkvc_encode --testsrc --stdout -s 640x480 -n 30 | \
-  rkvc_decode --stdin --stdout -s 640x480 | wc -c
+./examples/bin/example_encode_file -o test.mp4 -s 1920x1080 -n 100
 ```
 
 ## 示例程序
 
-本包包含以下示例程序源码和二进制：
+- `encode_file` — 测试图案编码
+- `decode_file` — 文件解码
+- `transcode` — 转码
+- `stream_encode` / `stream_decode` / `stream_transcode` — 流式处理
+- `latency_test` — 端到端延迟
+- `psnr_test` — 编解码质量
+- `decode_formats` — 多像素格式验证
 
-- `encode_file` — 文件编码示例
-- `decode_file` — 文件解码示例
-- `decode_formats` — 解码输出格式验证示例（NV12/YUV420P/NV16/P010）
-- `stream_encode` — 流式编码示例
-- `stream_decode` — 流式解码示例
-- `transcode` — 转码示例
-- `stream_transcode` — 流式转码示例
-- `stream_device_pair` — 双设备流式传输示例
-- `latency_test` — 端到端延迟测试
-- `psnr_test` — 编解码质量测试
-- `visual_compare` — SDL2 可视化质量预览（可选构建）
-
-示例程序位于 `examples/` 目录。
+详见 `EXAMPLES.md`。
 
 ## 开发集成
-
-### pkg-config 方式
 
 ```bash
 gcc -o myapp myapp.c $(pkg-config --cflags --libs rkvc)
 ```
 
-### CMake 方式
-
 ```cmake
 find_package(rkvc REQUIRED)
 target_link_libraries(myapp PRIVATE rkvc::shared)
 ```
+
+详见 `DEVELOPMENT.md`。
 
 ## 技术支持
 

@@ -2,42 +2,40 @@
 set -euo pipefail
 
 BUILD_DIR="${1:?usage: $0 <build-dir>}"
-BENCH="$BUILD_DIR/rkvc_bench"
+TRANS="$BUILD_DIR/rkvc_transcode"
 TMPDIR="$(mktemp -d)"
 trap 'rm -rf "$TMPDIR"' EXIT
 
-if [ ! -x "$BENCH" ]; then
-    echo "FAIL bench permission: missing executable $BENCH"
-    echo "hint: run this against a tools-enabled test build such as the full-tests preset"
+if [ ! -x "$TRANS" ]; then
+    echo "FAIL: missing $TRANS"
     exit 1
+fi
+
+if ! grep -q 'RKVC_ENABLE_FAULT_INJECTION:BOOL=ON' "$BUILD_DIR/CMakeCache.txt" 2>/dev/null; then
+    echo "skip bench permission: RKVC_ENABLE_FAULT_INJECTION=OFF"
+    exit 77
 fi
 
 mkdir -p "$TMPDIR/dev/dma_heap"
 touch "$TMPDIR/dev/mpp_service"
-touch "$TMPDIR/dev/dma_heap/cma"
+touch "$TMPDIR/dev/dma_heap/system-uncached"
 
 set +e
-output=$(RKVC_TEST_DEV_ROOT="$TMPDIR" "$BENCH" -s 640x480 -n 3 --encode-only -o "$TMPDIR/out" 2>&1)
+output=$(RKVC_TEST_DEV_ROOT="$TMPDIR" RKVC_TEST_DENY_DEV_PATH="/dev/dma_heap/system-uncached" \
+    "$TRANS" -i /dev/null -o "$TMPDIR/out.mp4" -s 64x64 -p realtime 2>&1)
 status=$?
 set -e
 
 if [ "$status" -eq 0 ]; then
     echo "FAIL bench permission: command unexpectedly succeeded"
-    echo "hint: this test requires RKVC_ENABLE_FAULT_INJECTION=ON"
     printf '%s\n' "$output"
     exit 1
 fi
 
-if ! printf '%s\n' "$output" | grep -q "\[FAIL\] encode"; then
-    echo "FAIL bench permission: missing [FAIL] encode"
-    printf '%s\n' "$output"
-    exit 1
-fi
-
-if ! printf '%s\n' "$output" | grep -q "device permission denied"; then
+if ! printf '%s\n' "$output" | grep -qi "permission"; then
     echo "FAIL bench permission: missing permission error"
     printf '%s\n' "$output"
     exit 1
 fi
 
-echo "bench permission failure propagation test passed"
+echo "session permission failure propagation test passed"

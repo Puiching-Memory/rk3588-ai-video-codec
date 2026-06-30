@@ -1,34 +1,33 @@
 # Build
 build/
-build-deps/
-build-debug/
-build-tests/
-build-asan/
-build-coverage/
-build-portable/
+build-*/
 *.o
 *.a
 *.so
 *.so.*
 *.dylib
 
-# CMake
+# CMake / CTest
 CMakeCache.txt
 CMakeFiles/
 cmake_install.cmake
 Makefile
 compile_commands.json
+Testing/
 
-# ffmpeg 子模块构建产物
+# ffmpeg 子模块就地构建产物（prefix=源码树时）
 third_party/ffmpeg-rockchip/ffbuild/
 third_party/ffmpeg-rockchip/config.h
+third_party/ffmpeg-rockchip/config_components.h
 third_party/ffmpeg-rockchip/*.pc
 third_party/ffmpeg-rockchip/ffversion.h
+third_party/ffmpeg-rockchip/ffmpeg
+third_party/ffmpeg-rockchip/ffprobe
+third_party/ffmpeg-rockchip/ffplay
 
 # Test & Bench results
 results/
 bench_results/
-*.xml
 
 # Docs
 site/
@@ -39,12 +38,23 @@ site/
 *.swp
 *~
 
+# Python
+__pycache__/
+*.pyc
+.venv/
+
 # Misc
 .cache/
 .scratch/
 nohup.out
+*.xml
 
 # Test media files
 *.mp4
+*.mkv
+*.webm
 *.h264
 *.h265
+*.ivf
+*.yuv
+*.y4m
