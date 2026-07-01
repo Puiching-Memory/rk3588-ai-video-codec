@@ -6,60 +6,67 @@
 
 ### 发布重点
 
-- **rkvc v2 破坏性升级**：移除 v1 `encoder` / `decoder` / `stream` / `frame` / `scale` API，统一为 **Session + Pipeline + Codec Router** 架构。
-- **多码率策略路由**：`REALTIME`→H.264 RKMPP、`BALANCED`→HEVC RKMPP、`QUALITY`→SVT-AV1 编码 + `av1_rkmpp` 硬解。
-- **可移植包重建**：`rkvc-0.2.0-linux-aarch64-portable.tar.gz`（约 4.5 MB），随包携带 `libSvtAv1Enc.so.4`、更新后的 ffmpeg-rockchip（含 AV1 硬解）与 rockchip-mpp；`test.sh` 自测 **92 项全过**。
-- **RD 基准套件**：`bench/` 与 `scripts/run-bench.sh`，支持 H.264 / HEVC / SVT-AV1 / rkvc v2 端到端码率-画质对比。
+rkvc **0.2.0**（v2 API）是面向 RK3588 的破坏性大版本：以 **Session + Pipeline + Codec Router** 取代 v1 的 `encoder` / `decoder` / `stream` / `frame` / `scale` API，并首次打通 **H.264 / HEVC / AV1** 三条编解码路线与 **下采样编码 + RGA 后处理上采样** 评估管线。
+
+- **策略路由**：`REALTIME` → H.264 RKMPP；`BALANCED` → HEVC RKMPP（1080p@≥50fps 自动降级 H.264）；`QUALITY` → SVT-AV1 编码 + `av1_rkmpp` 硬解。
+- **后处理上采样**：`enc_scale_denom` + `post_upscale_algo` 贯穿 Session 管线与 bench，模拟「低分辨率编码 → 硬解 DMABUF → RGA 上采样还原」产品路径。
+- **可移植包**：`rkvc-0.2.0-linux-aarch64-portable.tar.gz`（约 4.5 MB），自包含 `libSvtAv1Enc.so.4`、ffmpeg-rockchip（含 AV1 硬解）与 rockchip-mpp；`test.sh` **92 项全过**。
+- **RD 基准套件**：`bench/` 支持 H.264 / HEVC / SVT-AV1 / rkvc 三档策略 / post-upscale 端到端码率-画质与性能对比。
 
 ### 破坏性变更
 
 - **公共 API 全面替换**
-  - 删除：`include/rkvc/encoder.h`、`decoder.h`、`stream.h`、`frame.h`、`scale.h` 及对应 `lib/*.c` 实现。
-  - 新增：`buffer.h`（DMA-BUF 统一缓冲）、`pipeline.h`（管线模板）、`policy.h`（Codec Router）、`port.h`（命名端口）、`session.h`（会话生命周期）。
-  - 核心入口：`rkvc_session_create()` + `rkvc_session_run_file()` / `rkvc_session_port()`；文件编解码/转码通过 `rkvc_pipeline_from_template()` 配置。
+  - 删除：`encoder.h`、`decoder.h`、`stream.h`、`frame.h`、`scale.h` 及对应 `lib/*.c` 实现。
+  - 新增：`buffer.h`（DMA-BUF 统一缓冲）、`pipeline.h`（管线模板与 `enc_scale_denom` / `post_upscale_algo`）、`policy.h`（Codec Router）、`port.h`（命名端口）、`session.h`（会话生命周期与分阶段计时统计）。
+  - 核心入口：`rkvc_session_create()` → `rkvc_session_run_file()` 或 `rkvc_session_port()`；管线通过 `rkvc_pipeline_from_template()` 配置。
 - **CLI 行为变更**
-  - `rkvc_encode`：仅接受原始 NV12 文件输入（`-i raw.nv12`），移除 `--testsrc` / `--stdin` / `--stdout`；输出默认为 MP4 容器。
-  - `rkvc_decode`：`-i` 接受容器/码流文件，`-o` 输出原始 NV12；移除管道模式。
-  - `rkvc_info --json`：字段由 `rkmpp_enc/dec` 改为 `h264_enc`、`hevc_enc`、`av1_enc`、`h264_dec`、`hevc_dec`、`av1_dec`。
-  - 新增 `rkvc_transcode`：`-p realtime|balanced|quality` 一键转码。
+  - `rkvc_encode`：仅接受原始 NV12 文件（`-i raw.nv12`），移除 `--testsrc` / `--stdin` / `--stdout`；输出默认为 MP4。
+  - `rkvc_decode`：`-i` 容器/码流，`-o` 原始 NV12；移除管道模式。
+  - `rkvc_info --json`：字段改为 `h264_enc`、`hevc_enc`、`av1_enc`、`h264_dec`、`hevc_dec`、`av1_dec`。
+  - 新增 `rkvc_transcode`：`-p realtime|balanced|quality` 策略转码。
+- **包名与版本**：`rkvc-0.1.x-linux-aarch64-portable` → `rkvc-0.2.0-linux-aarch64-portable`。
 
 ### 新增
 
-- **Codec Router 与管线节点**
-  - `lib/router.c`：按 `rkvc_policy` / 分辨率解析 `rkvc_route_plan`（MPP / SVT 后端选择）。
-  - 节点图：`node_demux` / `node_mux` / `node_mpp_dec` / `node_mpp_enc` / `node_svt_enc` / `node_rga` / `node_dma_to_host` / `node_post_upscale`。
-  - 模板：`FILE_ENCODE`、`FILE_DECODE`、`FILE_TRANSCODE`、`LIVE_CAPTURE`（占位）、`AV1_STORAGE`。
+- **Codec Router 与节点图**
+  - `lib/router.c`：按 `rkvc_policy`、分辨率、帧率解析 `rkvc_route_plan`。
+  - 节点：`node_demux` / `node_mux` / `node_mpp_dec` / `node_mpp_enc` / `node_svt_enc` / `node_rga` / `node_dma_to_host` / `node_post_upscale`。
+  - 模板：`FILE_ENCODE`、`FILE_DECODE`、`FILE_TRANSCODE`、`AV1_STORAGE`、`LIVE_CAPTURE`（占位）。
 
-- **SVT-AV1 集成**
-  - 子模块 `third_party/SVT-AV1/`，构建脚本 `scripts/build-svt.sh`。
-  - `QUALITY` 策略走 SVT-AV1 软件编码 + `av1_rkmpp` 硬件解码。
+- **SVT-AV1 与 AV1 硬解**
+  - 子模块 `third_party/SVT-AV1/`，`scripts/build-svt.sh` 构建 `libSvtAv1Enc.so.4`。
+  - `scripts/rebuild-ffmpeg-rkmpp.sh` 启用 `h264_rkmpp` / `hevc_rkmpp` / `av1_rkmpp`。
 
-- **ffmpeg-rockchip 重建**
-  - `scripts/rebuild-ffmpeg-rkmpp.sh`：启用 H.264/HEVC/AV1 RKMPP 编解码。
-  - 可移植包携带 `libavcodec` / `libavformat` / `libavutil` / `libswscale` 及 `libSvtAv1Enc`。
+- **RGA 上采样 API 与后处理管线**
+  - 公共 API：`rkvc_upscale_yuv420p()`、`rkvc_upscale_nv12()`、`rkvc_upscale_ctx_*()`；算法 `nearest` / `bilinear` / `bicubic`。
+  - Session 字段：`enc_scale_denom`（编码前 1/N 下采样）、`post_upscale_algo`（解码后 RGA 还原）；`width`/`height` 始终为显示分辨率。
+  - `node_post_upscale`：RKMPP 硬解 DMABUF → RGA `importbuffer` → `imresize` → 主机 NV12。
+  - CLI 工具：`rkvc_yuv_upscale`（YUV420p 批处理）、`rkvc_session_upscale`（Session 硬解 + RGA，bench 与产品同路径）。
 
 - **RD 基准测试（bench/）**
-  - `scripts/run-bench.sh`：端到端 PSNR/SSIM/码率/fps 采样与 RD 曲线绘制。
-  - 默认对比 H.264 RKMPP、HEVC RKMPP、纯 SVT-AV1、rkvc v2 三路策略。
+  - `scripts/run-bench.sh`：端到端 PSNR/SSIM/码率/fps 采样，`plot_rd_curve.py` / `plot_perf.py` 绘图。
+  - 默认路线：`h264`、`h265`、`svt-av1`、`rkvc-v2`（三档策略展开）、`post-upscale`（下采样编码 + Session 解码上采样）。
+  - 可配置 `ENC_SCALE_DENOM`、`UPSCALE_ALGOS`、`RUN_CODECS`；支持 SVT-AV1 superres 实验路线（搁置，硬解 stride 不一致）。
 
-- **构建辅助**
-  - `scripts/build-common.sh`：统一编译并行度上限（默认 4）。
-  - `scripts/portable-test-helpers.sh`：可移植包测试共用 NV12 生成与编码辅助。
+- **构建与打包**
+  - `scripts/build-common.sh`：统一编译并行度（默认 4）。
+  - `scripts/portable-test-helpers.sh`：可移植包 NV12 生成与编码辅助。
+  - `scripts/package-portable.sh`：打包 `rkvc_transcode`、`rkvc_session_upscale`、`libSvtAv1Enc` 并设置 RPATH。
 
 ### 变更
 
 - 版本号升至 **0.2.0**（`CMakeLists.txt` `project(VERSION)` 为唯一来源）。
-- `scripts/package-portable.sh`：打包 `rkvc_transcode`；复制 `libSvtAv1Enc` 并设置 RPATH；附带 `portable-test-helpers.sh`。
-- `scripts/test-portable.sh`：适配 v2 头文件、JSON 字段、Session 编解码流程；新增 `rkvc_transcode` 与 `rkvc_bench` session E2E 短测；共 **92 项**。
-- `scripts/network-e2e-test.sh`：改为 v2 冒烟测试（码流生成 + `stream_device_pair` 占位验证）；完整 UDP/RTP 回环待 `LIVE_CAPTURE` 模板接入后恢复。
+- `scripts/test-portable.sh`：适配 v2 头文件、JSON 字段、Session 编解码/转码、`rkvc_bench` 三策略短测；共 **92 项**。
+- `scripts/network-e2e-test.sh`：v2 冒烟（码流生成 + `stream_device_pair` 占位）；完整 UDP/RTP 回环待 `LIVE_CAPTURE` 接入。
 - `examples/stream_device_pair.c`：v2 占位，提示 LiveCapture/V4L2 待接。
-- 所有示例程序改写为 Session API（`encode_file` 内置测试图案生成等）。
+- 全部示例改写为 Session API；`docs/architecture.md`、`docs/migration.md` 同步 v2 架构与上采样管线说明。
 
 ### 测试
 
-- CMocka / CTest 用例全面改写为 v2 Session / Router / Buffer 测试；硬件测试通过 `RKVC_RUN_HARDWARE_TESTS=1` 串行执行。
-- **可移植包完整测试**：`rkvc-0.2.0-linux-aarch64-portable.tar.gz` 解压后 `./test.sh` **92 项 / 0 失败**；覆盖文件完整性、RPATH 自包含、`rkvc_info` JSON、NV12 编码→MP4 解码→NV12 转码、`rkvc_bench` 三策略短测、pkg-config 最小程序、负向包结构检测。
-- `network-e2e-test.sh`：码流生成 + `stream_device_pair` 冒烟通过；UDP/RTP 完整回环标记为后续版本。
+- CMocka / CTest 全面改写为 v2 Session / Router / Buffer / post-upscale 测试；硬件测试通过 `RKVC_RUN_HARDWARE_TESTS=1` 串行执行。
+- 新增 `test_post_upscale.c`、`test_scale` 中 `rkvc_post_upscale_buffer` 与 `enc_scale_denom` 硬件回归。
+- `scripts/test-rga.sh`：1080p↔360p、padding 源、post_upscale soak 门禁。
+- **可移植包**：`rkvc-0.2.0-linux-aarch64-portable.tar.gz` 解压后 `./test.sh` **92 项 / 0 失败**；覆盖 RPATH 自包含、编解码转码、pkg-config、负向包结构检测。
 
 ### 迁移提示（v0.1.x → v0.2.0）
 
@@ -89,6 +96,10 @@ rkvc_encode --testsrc -o test.h265 -s 1920x1080 -n 100
 ./examples/bin/example_encode_file -o test.mp4 -s 1920x1080 -n 100
 # 或
 rkvc_encode -i raw.nv12 -o out.mp4 -s 1920x1080 -p realtime
+
+# 下采样编码 + 后处理上采样（评估 NN 占位）
+rkvc_session_upscale -i stream.mp4 -o out.nv12 \
+  --width 1920 --height 1080 --enc-scale-denom 2 --post-upscale bilinear
 ```
 
 ## [0.1.6] - 2026-06-23
