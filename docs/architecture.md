@@ -103,7 +103,7 @@ graph TD
 2. **上传**: 节点内部通过 `av_hwframe_transfer_data` 上传到 RKMPP DMA-BUF
 3. **处理**: MPP / SVT 硬件或软件编码；RGA 负责下采样
 4. **下载**: `node_dma_to_host` 将硬件帧拉回主机内存
-5. **后处理**: `node_post_upscale` 经 `node_rga`（`importbuffer` → `imcheck` → `imresize`）还原分辨率；bench 上采样仍用 CPU swscale
+5. **后处理**: `node_post_upscale` 经 `node_rga`（`importbuffer` → `imcheck` → `imresize`）还原分辨率；bench post-upscale 与 Session 同路径（`rkvc_session_upscale`：DMABUF 硬解 → RGA）
 6. **释放**: `rkvc_buffer_unref()` 引用计数归零时释放
 
 ## 下采样 + 后处理上采样

@@ -7,6 +7,13 @@
 
 #include <sys/time.h>
 
+static double session_now_sec(void)
+{
+    struct timespec ts;
+    clock_gettime(CLOCK_MONOTONIC, &ts);
+    return (double)ts.tv_sec + (double)ts.tv_nsec * 1e-9;
+}
+
 static int session_align2(int v)
 {
     return v > 0 ? (v & ~1) : 0;
@@ -55,6 +62,29 @@ static rkvc_err session_downscale_for_encode(rkvc_session *s,
     return RKVC_OK;
 }
 
+static int session_can_rga_upscale_dmabuf(const rkvc_session *s,
+                                         const rkvc_buffer *frame)
+{
+    return session_needs_post_upscale(s) &&
+           rkvc_rga_available() &&
+           frame->mem_type == RKVC_MEM_DMABUF &&
+           frame->format == RKVC_PIX_FMT_NV12;
+}
+
+static rkvc_err session_frame_to_host(const rkvc_session *s,
+                                      rkvc_buffer *frame,
+                                      rkvc_buffer **host)
+{
+    if (session_can_rga_upscale_dmabuf(s, frame)) {
+        *host = rkvc_buffer_ref(frame);
+        return RKVC_OK;
+    }
+    if (frame->mem_type == RKVC_MEM_DMABUF)
+        return rkvc_dma_to_host(frame, host);
+    *host = rkvc_buffer_ref(frame);
+    return RKVC_OK;
+}
+
 static rkvc_err session_apply_post_upscale(rkvc_session *s,
                                            rkvc_buffer *host,
                                            rkvc_buffer **out)
@@ -63,15 +93,60 @@ static rkvc_err session_apply_post_upscale(rkvc_session *s,
     if (!session_needs_post_upscale(s))
         return RKVC_OK;
 
+    if (!s->rga_scale) {
+        s->rga_scale = rkvc_rga_scale_ctx_create(s->desc.width, s->desc.height,
+                                                 s->desc.post_upscale_algo);
+        if (!s->rga_scale)
+            return RKVC_ERR_HW;
+    }
+
     rkvc_buffer *up = NULL;
-    rkvc_err err = rkvc_post_upscale_buffer(host, &up,
-                                            s->desc.width, s->desc.height,
-                                            s->desc.post_upscale_algo);
+    rkvc_err err = rkvc_rga_scale_ctx_process(s->rga_scale, host, &up);
     if (err != RKVC_OK)
         return err;
-    up->pts = host->pts;
     *out = up;
     return RKVC_OK;
+}
+
+static int session_nv12_contiguous(const AVFrame *f)
+{
+    if (!f || !f->data[0] || f->format != AV_PIX_FMT_NV12 || !f->data[1])
+        return 0;
+    return (f->data[1] == f->data[0] + (ptrdiff_t)f->linesize[0] * f->height)
+        && (f->linesize[1] == f->linesize[0]);
+}
+
+static void session_write_nv12_frame(FILE *fp, const AVFrame *f)
+{
+    const int h = f->height;
+    const int ls = f->linesize[0];
+    const int us = f->linesize[1];
+
+    if (session_nv12_contiguous(f)) {
+        const size_t nbytes = (size_t)ls * (size_t)h +
+                              (size_t)us * (size_t)(h / 2);
+        fwrite(f->data[0], 1, nbytes, fp);
+        return;
+    }
+
+    for (int y = 0; y < h; y++)
+        fwrite(f->data[0] + y * ls, 1, (size_t)ls, fp);
+    for (int y = 0; y < h / 2; y++)
+        fwrite(f->data[1] + y * us, 1, (size_t)us, fp);
+}
+
+static void session_write_nv12_buffer(FILE *fp, const rkvc_buffer *buf)
+{
+    if (!buf || !buf->av_frame)
+        return;
+
+    const AVFrame *f = buf->av_frame;
+    rkvc_err err = rkvc_buffer_dmabuf_begin_cpu_read(buf);
+    if (err != RKVC_OK)
+        return;
+
+    session_write_nv12_frame(fp, f);
+    rkvc_buffer_dmabuf_end_cpu_read(buf);
 }
 
 static void port_init(rkvc_port *p, const char *name, int depth,
@@ -316,6 +391,8 @@ void rkvc_session_destroy(rkvc_session *session)
         rkvc_mpp_dec_close(session->dec);
     if (session->demux)
         rkvc_demux_close(session->demux);
+    if (session->rga_scale)
+        rkvc_rga_scale_ctx_destroy(session->rga_scale);
 
     rkvc_port_queue_destroy(session->port_capture.queue);
     rkvc_port_queue_destroy(session->port_output.queue);
@@ -464,7 +541,13 @@ static rkvc_err decode_loop(rkvc_session *s)
     rkvc_err err = RKVC_OK;
     int dec_eof = 0;
 
+    s->stats.decode_sec   = 0.0;
+    s->stats.rga_sec      = 0.0;
+    s->stats.write_sec    = 0.0;
+    s->stats.postproc_sec = 0.0;
+
     while (!s->stop_requested) {
+        const double t_dec0 = session_now_sec();
         if (!dec_eof) {
             rkvc_buffer *pkt = NULL;
             err = rkvc_demux_read_packet(s->demux, &pkt);
@@ -499,26 +582,41 @@ static rkvc_err decode_loop(rkvc_session *s)
         }
 
         rkvc_buffer *host = NULL;
-        if (frame->mem_type == RKVC_MEM_DMABUF)
-            err = rkvc_dma_to_host(frame, &host);
-        else
-            host = rkvc_buffer_ref(frame);
+        err = session_frame_to_host(s, frame, &host);
+        const double t_dec1 = session_now_sec();
 
         rkvc_buffer *display = NULL;
+        const double t_rga0 = session_now_sec();
         if (err == RKVC_OK && host)
             err = session_apply_post_upscale(s, host, &display);
+        const double t_rga1 = session_now_sec();
 
         if (err == RKVC_OK && display && display->av_frame) {
-            int h = display->av_frame->height;
-            int ls = display->av_frame->linesize[0];
-            for (int y = 0; y < h; y++)
-                fwrite(display->av_frame->data[0] + y * ls, 1, (size_t)ls, fp);
-            for (int y = 0; y < h / 2; y++)
-                fwrite(display->av_frame->data[1] + y * display->av_frame->linesize[1],
-                       1, (size_t)display->av_frame->linesize[1], fp);
+            rkvc_buffer *write_buf = display;
+            rkvc_buffer *cpu = NULL;
+            if (display->mem_type == RKVC_MEM_DMABUF &&
+                (!display->av_frame->data[0] ||
+                 display->av_frame->format == AV_PIX_FMT_DRM_PRIME)) {
+                err = rkvc_dma_to_host(display, &cpu);
+                if (err == RKVC_OK)
+                    write_buf = cpu;
+            }
+            if (err == RKVC_OK && write_buf->av_frame) {
+                if (write_buf->mem_type == RKVC_MEM_DMABUF)
+                    session_write_nv12_buffer(fp, write_buf);
+                else
+                    session_write_nv12_frame(fp, write_buf->av_frame);
+            }
+            rkvc_buffer_unref(cpu);
             rkvc_port_push(&s->port_output, display);
             rkvc_session_stats_tick(s, 1);
         }
+
+        const double t_wr1 = session_now_sec();
+        s->stats.decode_sec   += (t_dec1 - t_dec0);
+        s->stats.rga_sec      += (t_rga1 - t_rga0);
+        s->stats.write_sec    += (t_wr1 - t_rga1);
+        s->stats.postproc_sec += (t_wr1 - t_rga0);
 
         if (display != host)
             rkvc_buffer_unref(display);

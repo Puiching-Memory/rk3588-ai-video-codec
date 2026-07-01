@@ -70,6 +70,27 @@ static void rga_import_release(rga_import_t *imp)
     }
 }
 
+static int buffer_nv12_rga_stride(const rkvc_buffer *buf, int *wstride, int *hstride)
+{
+    if (!buf || !buf->av_frame || !wstride || !hstride)
+        return 0;
+
+    const int w = buf->av_frame->width;
+    const int h = buf->av_frame->height;
+    if (w <= 0 || h <= 0)
+        return 0;
+
+    int ws = buf->av_frame->linesize[0];
+    if (ws <= 0 && buf->strides[0] > 0)
+        ws = (int)buf->strides[0];
+    if (ws <= 0)
+        ws = w;
+
+    *wstride = ws;
+    *hstride = h;
+    return 1;
+}
+
 static rkvc_err rga_import_nv12_buffer(const rkvc_buffer *buf, int w, int h,
                                        int wstride, int hstride,
                                        rga_import_t *imp, rga_buffer_t *rga)
@@ -161,6 +182,53 @@ static rkvc_err rga_resize_checked(const rga_buffer_t *src, const rga_buffer_t *
     return RKVC_OK;
 }
 
+static rkvc_err rga_scale_nv12_virtual(const uint8_t *src, const uint8_t *dst,
+                                       int src_w, int src_h,
+                                       int dst_w, int dst_h,
+                                       IM_SCALE_MODE mode)
+{
+    if (!src || !dst)
+        return RKVC_ERR_INVALID;
+    if (!rga_nv12_stride_ok(src_w, src_h) || !rga_nv12_stride_ok(dst_w, dst_h))
+        return RKVC_ERR_FORMAT;
+
+    rga_import_t src_imp = {0};
+    rga_import_t dst_imp = {0};
+    rga_buffer_t rga_src;
+    rga_buffer_t rga_dst;
+    rkvc_err err = RKVC_OK;
+
+    const int fmt = RK_FORMAT_YCbCr_420_SP;
+    im_handle_param_t src_param = {
+        .width  = (uint32_t)src_w,
+        .height = (uint32_t)src_h,
+        .format = (uint32_t)fmt,
+    };
+    im_handle_param_t dst_param = {
+        .width  = (uint32_t)dst_w,
+        .height = (uint32_t)dst_h,
+        .format = (uint32_t)fmt,
+    };
+
+    src_imp.handle = importbuffer_virtualaddr((void *)(uintptr_t)src, &src_param);
+    dst_imp.handle = importbuffer_virtualaddr((void *)(uintptr_t)dst, &dst_param);
+    if (!src_imp.handle || !dst_imp.handle) {
+        err = RKVC_ERR_HW;
+        goto done;
+    }
+
+    src_imp.owned = 1;
+    dst_imp.owned = 1;
+    rga_src = wrapbuffer_handle_t(src_imp.handle, src_w, src_h, src_w, src_h, fmt);
+    rga_dst = wrapbuffer_handle_t(dst_imp.handle, dst_w, dst_h, dst_w, dst_h, fmt);
+    err = rga_resize_checked(&rga_src, &rga_dst, mode);
+
+done:
+    rga_import_release(&src_imp);
+    rga_import_release(&dst_imp);
+    return err;
+}
+
 static rkvc_err rga_scale_nv12_buffers(const rkvc_buffer *src, rkvc_buffer *dst,
                                        IM_SCALE_MODE mode)
 {
@@ -170,6 +238,11 @@ static rkvc_err rga_scale_nv12_buffers(const rkvc_buffer *src, rkvc_buffer *dst,
     const int sh = sf->height;
     const int dw = df->width;
     const int dh = df->height;
+    int src_ws = 0, src_hs = 0, dst_ws = 0, dst_hs = 0;
+
+    if (!buffer_nv12_rga_stride(src, &src_ws, &src_hs) ||
+        !buffer_nv12_rga_stride(dst, &dst_ws, &dst_hs))
+        return RKVC_ERR_FORMAT;
 
     rga_import_t src_imp = {0};
     rga_import_t dst_imp = {0};
@@ -177,12 +250,12 @@ static rkvc_err rga_scale_nv12_buffers(const rkvc_buffer *src, rkvc_buffer *dst,
     rga_buffer_t rga_dst;
     rkvc_err err;
 
-    err = rga_import_nv12_buffer(src, sw, sh, sf->linesize[0], sh,
+    err = rga_import_nv12_buffer(src, sw, sh, src_ws, src_hs,
                                  &src_imp, &rga_src);
     if (err != RKVC_OK)
         goto done;
 
-    err = rga_import_nv12_buffer(dst, dw, dh, df->linesize[0], dh,
+    err = rga_import_nv12_buffer(dst, dw, dh, dst_ws, dst_hs,
                                  &dst_imp, &rga_dst);
     if (err != RKVC_OK)
         goto done;
@@ -234,7 +307,9 @@ rkvc_err rkvc_rga_scale_buffer(const rkvc_buffer *src, rkvc_buffer **dst,
         rga_src = work;
     }
 
-    if (!rga_nv12_stride_ok(rga_src->av_frame->linesize[0], sh) ||
+    int src_ws = 0, src_hs = 0;
+    if (!buffer_nv12_rga_stride(rga_src, &src_ws, &src_hs) ||
+        !rga_nv12_stride_ok(src_ws, src_hs) ||
         !rga_nv12_stride_ok(dst_w, dst_h)) {
         rkvc_buffer_unref(work);
         return RKVC_ERR_FORMAT;
@@ -264,6 +339,74 @@ rkvc_err rkvc_rga_scale_buffer(const rkvc_buffer *src, rkvc_buffer **dst,
     out->pts = src->pts;
     *dst = out;
     return RKVC_OK;
+}
+
+static void nv12_copy_tight_to_frame(const uint8_t *src, AVFrame *f, int w, int h)
+{
+    const int ys = f->linesize[0];
+    const size_t uv_off = (size_t)w * (size_t)h;
+    for (int y = 0; y < h; y++)
+        memcpy(f->data[0] + y * ys, src + (size_t)y * (size_t)w, (size_t)w);
+
+    const int ch = h / 2;
+    const int us = f->linesize[1];
+    for (int y = 0; y < ch; y++)
+        memcpy(f->data[1] + y * us, src + uv_off + (size_t)y * (size_t)w, (size_t)w);
+}
+
+static void nv12_copy_frame_to_tight(const AVFrame *f, uint8_t *dst, int w, int h)
+{
+    const int ys = f->linesize[0];
+    const size_t uv_off = (size_t)w * (size_t)h;
+    for (int y = 0; y < h; y++)
+        memcpy(dst + (size_t)y * (size_t)w, f->data[0] + y * ys, (size_t)w);
+
+    const int ch = h / 2;
+    const int us = f->linesize[1];
+    for (int y = 0; y < ch; y++)
+        memcpy(dst + uv_off + (size_t)y * (size_t)w, f->data[1] + y * us, (size_t)w);
+}
+
+rkvc_err rkvc_upscale_nv12(const uint8_t *src, uint8_t *dst,
+                           int src_w, int src_h,
+                           int dst_w, int dst_h,
+                           rkvc_upscale_algo algo)
+{
+    if (!src || !dst || src_w <= 0 || src_h <= 0 || dst_w <= 0 || dst_h <= 0)
+        return RKVC_ERR_INVALID;
+    if (algo == RKVC_UPSCALE_NONE)
+        return RKVC_ERR_INVALID;
+    if (!rkvc_rga_available())
+        return RKVC_ERR_HW;
+
+    const IM_SCALE_MODE mode = rkvc_upscale_to_rga_mode(algo);
+
+    /* 紧凑 NV12 + RGA 对齐 stride：直接 import 用户缓冲，零拷贝缩放。 */
+    rkvc_err err = rga_scale_nv12_virtual(src, dst, src_w, src_h, dst_w, dst_h,
+                                          mode);
+    if (err == RKVC_OK)
+        return RKVC_OK;
+
+    if (!rga_nv12_stride_ok(src_w, src_h) || !rga_nv12_stride_ok(dst_w, dst_h))
+        return RKVC_ERR_FORMAT;
+
+    rkvc_buffer *nv12_src = NULL;
+    rkvc_buffer *scaled = NULL;
+
+    err = rkvc_buffer_alloc_video_host(&nv12_src, src_w, src_h,
+                                       RKVC_PIX_FMT_NV12);
+    if (err != RKVC_OK)
+        return err;
+
+    nv12_copy_tight_to_frame(src, nv12_src->av_frame, src_w, src_h);
+    err = rkvc_rga_scale_buffer(nv12_src, &scaled, dst_w, dst_h,
+                                RKVC_PIX_FMT_NV12, algo);
+    if (err == RKVC_OK)
+        nv12_copy_frame_to_tight(scaled->av_frame, dst, dst_w, dst_h);
+
+    rkvc_buffer_unref(scaled);
+    rkvc_buffer_unref(nv12_src);
+    return err;
 }
 
 static void yuv420p_to_nv12_frame(const AVFrame *src, AVFrame *dst)
@@ -353,4 +496,263 @@ rkvc_err rkvc_upscale_yuv420p(const uint8_t *src, uint8_t *dst,
     rkvc_buffer_unref(scaled);
     rkvc_buffer_unref(nv12_src);
     return err;
+}
+
+struct rkvc_upscale_ctx {
+    int           src_w;
+    int           src_h;
+    int           dst_w;
+    int           dst_h;
+    IM_SCALE_MODE mode;
+    uint8_t      *src_buf;
+    uint8_t      *dst_buf;
+    size_t        src_bytes;
+    size_t        dst_bytes;
+    rga_import_t  src_imp;
+    rga_import_t  dst_imp;
+    rga_buffer_t  rga_src;
+    rga_buffer_t  rga_dst;
+};
+
+rkvc_upscale_ctx *rkvc_upscale_ctx_create(int src_w, int src_h,
+                                          int dst_w, int dst_h,
+                                          rkvc_upscale_algo algo)
+{
+    if (src_w <= 0 || src_h <= 0 || dst_w <= 0 || dst_h <= 0)
+        return NULL;
+    if (algo == RKVC_UPSCALE_NONE)
+        return NULL;
+    if (!rkvc_rga_available())
+        return NULL;
+    if (!rga_nv12_stride_ok(src_w, src_h) || !rga_nv12_stride_ok(dst_w, dst_h))
+        return NULL;
+
+    rkvc_upscale_ctx *ctx = rkvc_calloc(1, sizeof(*ctx));
+    if (!ctx)
+        return NULL;
+
+    ctx->src_w     = src_w;
+    ctx->src_h     = src_h;
+    ctx->dst_w     = dst_w;
+    ctx->dst_h     = dst_h;
+    ctx->mode      = rkvc_upscale_to_rga_mode(algo);
+    ctx->src_bytes = (size_t)src_w * (size_t)src_h * 3 / 2;
+    ctx->dst_bytes = (size_t)dst_w * (size_t)dst_h * 3 / 2;
+
+    ctx->src_buf = rkvc_malloc(ctx->src_bytes);
+    ctx->dst_buf = rkvc_malloc(ctx->dst_bytes);
+    if (!ctx->src_buf || !ctx->dst_buf)
+        goto fail;
+
+    const int fmt = RK_FORMAT_YCbCr_420_SP;
+    im_handle_param_t src_param = {
+        .width  = (uint32_t)src_w,
+        .height = (uint32_t)src_h,
+        .format = (uint32_t)fmt,
+    };
+    im_handle_param_t dst_param = {
+        .width  = (uint32_t)dst_w,
+        .height = (uint32_t)dst_h,
+        .format = (uint32_t)fmt,
+    };
+
+    ctx->src_imp.handle = importbuffer_virtualaddr(ctx->src_buf, &src_param);
+    ctx->dst_imp.handle = importbuffer_virtualaddr(ctx->dst_buf, &dst_param);
+    if (!ctx->src_imp.handle || !ctx->dst_imp.handle)
+        goto fail;
+
+    ctx->src_imp.owned = 1;
+    ctx->dst_imp.owned = 1;
+    ctx->rga_src = wrapbuffer_handle_t(ctx->src_imp.handle, src_w, src_h,
+                                       src_w, src_h, fmt);
+    ctx->rga_dst = wrapbuffer_handle_t(ctx->dst_imp.handle, dst_w, dst_h,
+                                       dst_w, dst_h, fmt);
+    return ctx;
+
+fail:
+    rkvc_upscale_ctx_destroy(ctx);
+    return NULL;
+}
+
+void rkvc_upscale_ctx_destroy(rkvc_upscale_ctx *ctx)
+{
+    if (!ctx)
+        return;
+    rga_import_release(&ctx->src_imp);
+    rga_import_release(&ctx->dst_imp);
+    rkvc_free(ctx->src_buf);
+    rkvc_free(ctx->dst_buf);
+    rkvc_free(ctx);
+}
+
+uint8_t *rkvc_upscale_ctx_src_buf(rkvc_upscale_ctx *ctx)
+{
+    return ctx ? ctx->src_buf : NULL;
+}
+
+uint8_t *rkvc_upscale_ctx_dst_buf(rkvc_upscale_ctx *ctx)
+{
+    return ctx ? ctx->dst_buf : NULL;
+}
+
+size_t rkvc_upscale_ctx_src_bytes(const rkvc_upscale_ctx *ctx)
+{
+    return ctx ? ctx->src_bytes : 0;
+}
+
+size_t rkvc_upscale_ctx_dst_bytes(const rkvc_upscale_ctx *ctx)
+{
+    return ctx ? ctx->dst_bytes : 0;
+}
+
+rkvc_err rkvc_upscale_ctx_process(rkvc_upscale_ctx *ctx)
+{
+    if (!ctx || !ctx->src_buf || !ctx->dst_buf)
+        return RKVC_ERR_INVALID;
+    return rga_resize_checked(&ctx->rga_src, &ctx->rga_dst, ctx->mode);
+}
+
+struct rkvc_rga_scale_ctx {
+    rkvc_buffer  *dst;
+    rga_import_t  dst_imp;
+    rga_buffer_t  rga_dst;
+    int           dst_w;
+    int           dst_h;
+    IM_SCALE_MODE mode;
+};
+
+rkvc_rga_scale_ctx *rkvc_rga_scale_ctx_create(int dst_w, int dst_h,
+                                              rkvc_upscale_algo algo)
+{
+    if (dst_w <= 0 || dst_h <= 0 || algo == RKVC_UPSCALE_NONE)
+        return NULL;
+    if (!rkvc_rga_available())
+        return NULL;
+    if (!rga_nv12_stride_ok(dst_w, dst_h))
+        return NULL;
+
+    rkvc_rga_scale_ctx *ctx = rkvc_calloc(1, sizeof(*ctx));
+    if (!ctx)
+        return NULL;
+
+    ctx->dst_w = dst_w;
+    ctx->dst_h = dst_h;
+    ctx->mode  = rkvc_upscale_to_rga_mode(algo);
+
+    rkvc_err err = rkvc_buffer_pool_alloc_video(NULL, &ctx->dst, dst_w, dst_h,
+                                                RKVC_PIX_FMT_NV12,
+                                                RKVC_MEM_DMABUF);
+    if (err != RKVC_OK)
+        err = rkvc_buffer_alloc_video_host(&ctx->dst, dst_w, dst_h,
+                                           RKVC_PIX_FMT_NV12);
+    if (err != RKVC_OK)
+        goto fail;
+
+    int dst_ws = 0, dst_hs = 0;
+    if (!buffer_nv12_rga_stride(ctx->dst, &dst_ws, &dst_hs)) {
+        err = RKVC_ERR_FORMAT;
+        goto fail;
+    }
+
+    if (!frame_contiguous(ctx->dst->av_frame)) {
+        err = RKVC_ERR_FORMAT;
+        goto fail;
+    }
+
+    const int fmt = RK_FORMAT_YCbCr_420_SP;
+    im_handle_param_t param = {
+        .width  = (uint32_t)dst_w,
+        .height = (uint32_t)dst_h,
+        .format = (uint32_t)fmt,
+    };
+    ctx->dst_imp.handle =
+        importbuffer_virtualaddr(ctx->dst->av_frame->data[0], &param);
+    if (!ctx->dst_imp.handle) {
+        err = RKVC_ERR_HW;
+        goto fail;
+    }
+    ctx->dst_imp.owned = 1;
+    ctx->rga_dst = wrapbuffer_handle_t(ctx->dst_imp.handle, dst_w, dst_h,
+                                       dst_ws, dst_hs, fmt);
+    return ctx;
+
+fail:
+    rkvc_rga_scale_ctx_destroy(ctx);
+    return NULL;
+}
+
+void rkvc_rga_scale_ctx_destroy(rkvc_rga_scale_ctx *ctx)
+{
+    if (!ctx)
+        return;
+    rga_import_release(&ctx->dst_imp);
+    rkvc_buffer_unref(ctx->dst);
+    rkvc_free(ctx);
+}
+
+rkvc_err rkvc_rga_scale_ctx_process(rkvc_rga_scale_ctx *ctx,
+                                  const rkvc_buffer *src,
+                                  rkvc_buffer **out)
+{
+    if (!ctx || !src || !out || !ctx->dst)
+        return RKVC_ERR_INVALID;
+
+    *out = NULL;
+    if (!src->av_frame || src->format != RKVC_PIX_FMT_NV12)
+        return RKVC_ERR_FORMAT;
+
+    const int sw = src->av_frame->width;
+    const int sh = src->av_frame->height;
+    if (sw == ctx->dst_w && sh == ctx->dst_h) {
+        *out = rkvc_buffer_ref((rkvc_buffer *)src);
+        return RKVC_OK;
+    }
+
+    rkvc_buffer *work = NULL;
+    const rkvc_buffer *rga_src = src;
+
+    if (src->mem_type != RKVC_MEM_DMABUF && !frame_contiguous(src->av_frame)) {
+        rkvc_err err = nv12_copy_contiguous(src, &work);
+        if (err != RKVC_OK)
+            return err;
+        rga_src = work;
+    }
+
+    int src_ws = 0, src_hs = 0;
+    if (!buffer_nv12_rga_stride(rga_src, &src_ws, &src_hs) ||
+        !rga_nv12_stride_ok(src_ws, src_hs)) {
+        rkvc_buffer_unref(work);
+        return RKVC_ERR_FORMAT;
+    }
+
+    rga_import_t src_imp = {0};
+    rga_buffer_t rga_src_buf;
+    rkvc_err err = rga_import_nv12_buffer(rga_src, sw, sh, src_ws, src_hs,
+                                          &src_imp, &rga_src_buf);
+    if (err != RKVC_OK) {
+        rkvc_buffer_unref(work);
+        return err;
+    }
+
+    err = rkvc_buffer_dmabuf_begin_device_write(ctx->dst);
+    if (err != RKVC_OK) {
+        rga_import_release(&src_imp);
+        rkvc_buffer_unref(work);
+        return err;
+    }
+
+    err = rga_resize_checked(&rga_src_buf, &ctx->rga_dst, ctx->mode);
+    rga_import_release(&src_imp);
+    rkvc_buffer_unref(work);
+
+    if (err != RKVC_OK)
+        return err;
+
+    err = rkvc_buffer_dmabuf_end_device_write(ctx->dst);
+    if (err != RKVC_OK)
+        return err;
+
+    ctx->dst->pts = src->pts;
+    *out = rkvc_buffer_ref(ctx->dst);
+    return RKVC_OK;
 }

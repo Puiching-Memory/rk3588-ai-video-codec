@@ -23,6 +23,10 @@ typedef struct {
     uint64_t        frames_out;
     uint64_t        frames_dropped;
     double          avg_fps;
+    double          decode_sec;    /**< 解码阶段累计耗时（FILE_DECODE） */
+    double          rga_sec;       /**< RGA 上采样累计耗时（FILE_DECODE） */
+    double          write_sec;     /**< NV12 写盘累计耗时（FILE_DECODE bench） */
+    double          postproc_sec;  /**< rga_sec + write_sec */
 } rkvc_session_stats;
 
 rkvc_err rkvc_session_create(const rkvc_pipeline_desc *desc,

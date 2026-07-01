@@ -21,7 +21,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y -qq clang-tidy
+          sudo apt-get install -y -qq clang-tidy cmake ninja-build
 
       - name: Install librga
         run: |
@@ -35,6 +35,12 @@ jobs:
         run: |
           cd third_party/ffmpeg-rockchip
           ./configure --disable-everything --disable-doc --disable-programs
+
+      - name: Build SVT-AV1 submodule
+        run: |
+          git submodule update --init --depth 1 third_party/SVT-AV1
+          chmod +x scripts/build-svt.sh
+          ./scripts/build-svt.sh
 
       - name: Create compile_commands.json
         run: |

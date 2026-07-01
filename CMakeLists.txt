@@ -280,6 +280,7 @@ if(RKVC_BUILD_TOOLS)
         tools/rkvc_decode.c
         tools/rkvc_transcode.c
         tools/rkvc_yuv_upscale.c
+        tools/rkvc_session_upscale.c
         tools/rkvc_info.c
     )
 

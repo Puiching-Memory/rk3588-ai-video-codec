@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""绘制端到端编解码 RD 曲线（码率 ≤ 1000 kbps）。"""
+"""绘制端到端编解码 RD 曲线（按 actual_kbps 自适应横轴）。"""
 
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ import statistics
 from collections import defaultdict
 from pathlib import Path
 
+import math
 import matplotlib.pyplot as plt
 
 UPSCALE_CODEC_RE = re.compile(
@@ -22,9 +23,9 @@ UPSCALE_GROUP_RE = re.compile(
 )
 
 CODEC_LABELS = {
-    "h264": "H.264 (RKMPP)",
-    "h265": "H.265 (RKMPP)",
-    "svt-av1": "SVT-AV1 (1080p)",
+    "h264": "H.264",
+    "h265": "H.265",
+    "svt-av1": "SVT-AV1",
     "rkvc-realtime": "rkvc realtime (H.264)",
     "rkvc-balanced": "rkvc balanced (HEVC)",
     "rkvc-quality": "rkvc quality (AV1)",
@@ -127,9 +128,8 @@ def upscale_group_scale(codec: str) -> int | None:
 def upscale_group_label(codec: str) -> str:
     base = upscale_group_base(codec) or codec
     scale = upscale_group_scale(codec) or 0
-    lo_h = 1080 // scale if scale else 0
     name = UPSCALE_BASE_LABELS.get(base, base)
-    return f"{name} {lo_h}p→1080p RGA (nearest/bilinear/bicubic)"
+    return f"{name}↑{scale}× RGA" if scale else name
 
 
 def upscale_group_color(codec: str) -> str:
@@ -148,6 +148,31 @@ def codec_label(codec: str) -> str:
         lo_h = 1080 // scale if scale else 0
         return f"{UPSCALE_BASE_LABELS.get(base, base)} {lo_h}p→1080p RGA ({algo})"
     return CODEC_LABELS.get(codec, codec)
+
+
+def codec_short_label(codec: str) -> str:
+    """柱状图 X 轴用短标签（图例仍用 codec_label）。"""
+    if is_upscale_group(codec):
+        base = upscale_group_base(codec) or codec
+        scale = upscale_group_scale(codec) or 0
+        name = UPSCALE_BASE_LABELS.get(base, base)
+        return f"{name}↑{scale}×" if scale else name
+    m = UPSCALE_CODEC_RE.match(codec)
+    if m:
+        base = m.group("base")
+        scale = int(m.group("scale"))
+        name = UPSCALE_BASE_LABELS.get(base, base)
+        return f"{name}↑{scale}×"
+    short = {
+        "h264": "H.264",
+        "h265": "H.265",
+        "svt-av1": "SVT-AV1",
+        "rkvc-realtime": "rkvc RT",
+        "rkvc-balanced": "rkvc Bal",
+        "rkvc-quality": "rkvc Q",
+        "rkvc-v2": "rkvc v2",
+    }
+    return short.get(codec, codec)
 
 
 def codec_color(codec: str) -> str | None:
@@ -169,8 +194,14 @@ def codec_marker(codec: str) -> str:
 
 
 def sort_codecs(codecs: list[str]) -> list[str]:
-    groups_present = sorted({gk for c in codecs if (gk := upscale_group_key(c))})
-    baselines = [c for c in codecs if upscale_group_key(c) is None]
+    groups_present = sorted(
+        {c for c in codecs if is_upscale_group(c)}
+        | {gk for c in codecs if (gk := upscale_group_key(c))}
+    )
+    baselines = [
+        c for c in codecs
+        if not is_upscale_group(c) and upscale_group_key(c) is None
+    ]
 
     ordered: list[str] = []
     for c in CODEC_ORDER:
@@ -224,7 +255,7 @@ def group_upscale_rd(data: dict[str, list[dict]]) -> dict[str, list[dict]]:
     return out
 
 
-def load_csv(path: Path) -> dict[str, list[dict]]:
+def load_csv(path: Path, max_kbps: float | None = None) -> dict[str, list[dict]]:
     data: dict[str, list[dict]] = defaultdict(list)
     with path.open(newline="") as f:
         for row in csv.DictReader(f):
@@ -238,13 +269,50 @@ def load_csv(path: Path) -> dict[str, list[dict]]:
                     "ssim": float(row["ssim"]),
                 }
             )
+    if max_kbps is None:
+        all_targets = [p["target_kbps"] for pts in data.values() for p in pts]
+        if all_targets:
+            # 按 target 扫点上限裁剪 actual，允许适度超发（CQP/CRF 未命中 target）
+            max_kbps = max(all_targets) * 3.0
+    if max_kbps is not None:
+        max_target = max(
+            (p["target_kbps"] for pts in data.values() for p in pts),
+            default=max_kbps,
+        )
+        for codec in data:
+            data[codec] = [
+                p
+                for p in data[codec]
+                if p["actual_kbps"] <= max_kbps or p["target_kbps"] <= max_target
+            ]
     for codec in data:
-        data[codec] = [p for p in data[codec] if p["actual_kbps"] <= 1050]
         data[codec].sort(key=lambda x: x["actual_kbps"])
     return data
 
 
-def plot_rd(data: dict[str, list[dict]], out_prefix: Path, title: str) -> None:
+def _log_axis_ticks(lo: float, hi: float) -> list[float]:
+    """在 [lo, hi] 内选取对数轴刻度（1-2-5 系列）。"""
+    if lo <= 0 or hi <= lo:
+        return [lo, hi]
+    exp_lo = int(math.floor(math.log10(lo)))
+    exp_hi = int(math.ceil(math.log10(hi)))
+    ticks: list[float] = []
+    for exp in range(exp_lo, exp_hi + 1):
+        for base in (1, 2, 5):
+            v = base * (10**exp)
+            if lo * 0.92 <= v <= hi * 1.08:
+                ticks.append(float(v))
+    return sorted(set(ticks))
+
+
+def plot_rd(
+    data: dict[str, list[dict]],
+    out_prefix: Path,
+    title: str,
+    *,
+    xscale: str = "log",
+    low_zoom_max_kbps: float = 300.0,
+) -> None:
     data = group_upscale_rd(data)
 
     plt.rcParams.update(
@@ -320,19 +388,45 @@ def plot_rd(data: dict[str, list[dict]], out_prefix: Path, title: str) -> None:
     psnr_pad = max(0.5, (psnr_max - psnr_min) * 0.12)
     ssim_pad = max(0.01, (ssim_max - ssim_min) * 0.12)
 
-    ax_psnr.set_xlim(br_min - br_pad, br_max + br_pad)
+    if xscale == "log":
+        # 左边界贴紧实际最小码率，避免 25–70 kbps 无数据区（对数轴上很显眼）
+        x_left = max(br_min * 0.88, 8.0)
+        x_right = max(br_max * 1.08, x_left * 1.5)
+        ticks = _log_axis_ticks(x_left, x_right)
+        for ax in (ax_psnr, ax_ssim):
+            ax.set_xscale("log")
+            ax.set_xlim(x_left, x_right)
+            if ticks:
+                ax.set_xticks(ticks)
+                ax.set_xticklabels([str(int(t)) if t >= 10 else f"{t:g}" for t in ticks])
+    else:
+        ax_psnr.set_xlim(br_min - br_pad, br_max + br_pad)
+        ax_ssim.set_xlim(br_min - br_pad, br_max + br_pad)
+
     ax_psnr.set_ylim(psnr_min - psnr_pad, psnr_max + psnr_pad)
-    ax_ssim.set_xlim(br_min - br_pad, br_max + br_pad)
     ax_ssim.set_ylim(ssim_min - ssim_pad, min(1.0, ssim_max + ssim_pad))
 
     for ax, ylabel in ((ax_psnr, "PSNR-Y (dB)"), (ax_ssim, "SSIM")):
         ax.set_xlabel("Actual Bitrate (kbps)")
         ax.set_ylabel(ylabel)
         ax.grid(True, linestyle="--", alpha=0.45)
-        ax.legend(loc="lower right", fontsize=7, framealpha=0.9)
 
-    fig.suptitle(title, fontsize=12, fontweight="bold", y=1.02)
-    fig.tight_layout()
+    handles, labels = ax_psnr.get_legend_handles_labels()
+    n = max(len(labels), 1)
+    fig.legend(
+        handles,
+        labels,
+        loc="upper center",
+        bbox_to_anchor=(0.5, -0.02),
+        ncol=min(n, 3),
+        fontsize=8,
+        framealpha=0.95,
+        columnspacing=1.2,
+        handletextpad=0.4,
+    )
+
+    fig.suptitle(title, fontsize=12, fontweight="bold", y=0.98)
+    fig.tight_layout(rect=(0, 0.10, 1, 0.94))
     png = out_prefix.with_suffix(".png")
     pdf = out_prefix.with_suffix(".pdf")
     fig.savefig(png, bbox_inches="tight", pad_inches=0.25)
@@ -340,6 +434,23 @@ def plot_rd(data: dict[str, list[dict]], out_prefix: Path, title: str) -> None:
     print(f"Saved: {png}")
     print(f"Saved: {pdf}")
     plt.close(fig)
+
+    # 低码率放大图：突出上采样优势交叉区（约 <300 kbps）
+    if low_zoom_max_kbps > 0:
+        zoom_data = {
+            codec: [p for p in pts if p["actual_kbps"] <= low_zoom_max_kbps * 1.05]
+            for codec, pts in data.items()
+            if any(p["actual_kbps"] <= low_zoom_max_kbps * 1.05 for p in pts)
+        }
+        if zoom_data:
+            zprefix = out_prefix.with_name(out_prefix.name + "_lowzoom")
+            plot_rd(
+                zoom_data,
+                zprefix,
+                title + f" (zoom ≤{int(low_zoom_max_kbps)} kbps)",
+                xscale="linear",
+                low_zoom_max_kbps=0,
+            )
 
 
 def main() -> None:
@@ -351,15 +462,39 @@ def main() -> None:
         "--title",
         default="E2E RD Curve (RK3588, baselines + rkvc realtime/balanced/quality)",
     )
+    parser.add_argument(
+        "--xscale",
+        choices=("log", "linear"),
+        default="log",
+        help="横轴刻度：log 便于展示低码率上采样优势区（默认 log）",
+    )
+    parser.add_argument(
+        "--low-zoom-max-kbps",
+        type=float,
+        default=300.0,
+        help="额外输出低码率放大图的上限 kbps（0=禁用，默认 300）",
+    )
+    parser.add_argument(
+        "--max-kbps",
+        type=float,
+        default=None,
+        help="过滤 actual_kbps 上限（默认 max(target_kbps)×1.15）",
+    )
     args = parser.parse_args()
 
     if not args.csv.exists():
         raise SystemExit(f"找不到数据文件: {args.csv}")
 
-    data = load_csv(args.csv)
+    data = load_csv(args.csv, max_kbps=args.max_kbps)
     if not data:
         raise SystemExit("CSV 无有效数据")
-    plot_rd(data, args.out, args.title)
+    plot_rd(
+        data,
+        args.out,
+        args.title,
+        xscale=args.xscale,
+        low_zoom_max_kbps=args.low_zoom_max_kbps,
+    )
 
 
 if __name__ == "__main__":

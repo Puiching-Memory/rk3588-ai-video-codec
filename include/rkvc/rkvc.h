@@ -61,6 +61,32 @@ rkvc_err rkvc_upscale_yuv420p(const uint8_t *src, uint8_t *dst,
                               int dst_w, int dst_h,
                               rkvc_upscale_algo algo);
 
+/** NV12 紧凑平面缓冲上采样（RGA 硬件，无 YUV420p 转换）。 */
+rkvc_err rkvc_upscale_nv12(const uint8_t *src, uint8_t *dst,
+                           int src_w, int src_h,
+                           int dst_w, int dst_h,
+                           rkvc_upscale_algo algo);
+
+/**
+ * 复用 RGA import 的批量上采样上下文（固定 src/dst 缓冲，避免每帧 import/release）。
+ * 适用于 bench 文件批处理与 Session 管线内多帧缩放。
+ */
+typedef struct rkvc_upscale_ctx rkvc_upscale_ctx;
+
+rkvc_upscale_ctx *rkvc_upscale_ctx_create(int src_w, int src_h,
+                                          int dst_w, int dst_h,
+                                          rkvc_upscale_algo algo);
+void rkvc_upscale_ctx_destroy(rkvc_upscale_ctx *ctx);
+
+/** 内部 NV12 源/目的缓冲（紧凑布局，可直接 pread / pwrite）。 */
+uint8_t *rkvc_upscale_ctx_src_buf(rkvc_upscale_ctx *ctx);
+uint8_t *rkvc_upscale_ctx_dst_buf(rkvc_upscale_ctx *ctx);
+size_t rkvc_upscale_ctx_src_bytes(const rkvc_upscale_ctx *ctx);
+size_t rkvc_upscale_ctx_dst_bytes(const rkvc_upscale_ctx *ctx);
+
+/** 对 ctx 内部缓冲执行一次 RGA 缩放。 */
+rkvc_err rkvc_upscale_ctx_process(rkvc_upscale_ctx *ctx);
+
 #ifdef __cplusplus
 }
 #endif

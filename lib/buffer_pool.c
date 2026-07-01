@@ -8,6 +8,11 @@
 #include <errno.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
+#include <drm/drm_fourcc.h>
+
+#ifdef __linux__
+#include <linux/dma-buf.h>
+#endif
 
 #ifndef DMA_HEAP_IOCTL_ALLOC
 struct dma_heap_allocation_data {
@@ -273,6 +278,15 @@ rkvc_buffer *rkvc_buffer_from_drm_frame(AVFrame *hw_frame)
     if (!desc || desc->nb_objects == 0 || desc->nb_layers == 0)
         return NULL;
 
+    const AVDRMLayerDescriptor *layer = &desc->layers[0];
+    /* 线性 NV12：双 plane；AFBC/RFBC 为单 plane，需 hw download。 */
+    if (layer->format != DRM_FORMAT_NV12 || layer->nb_planes < 2)
+        return NULL;
+
+    const int pitch = layer->planes[0].pitch;
+    if (pitch <= 0)
+        return NULL;
+
     rkvc_buffer *b = rkvc_buffer_wrap_avframe(hw_frame, 1);
     if (!b)
         return NULL;
@@ -280,6 +294,15 @@ rkvc_buffer *rkvc_buffer_from_drm_frame(AVFrame *hw_frame)
     b->mem_type = RKVC_MEM_DMABUF;
     b->fd       = desc->objects[0].fd;
     b->modifier = desc->objects[0].format_modifier;
+    b->format   = RKVC_PIX_FMT_NV12;
+    b->width    = (uint32_t)hw_frame->width;
+    b->height   = (uint32_t)hw_frame->height;
+    b->strides[0] = (uint32_t)pitch;
+    b->strides[1] = (uint32_t)pitch;
+    if (b->av_frame) {
+        b->av_frame->linesize[0] = pitch;
+        b->av_frame->linesize[1] = pitch;
+    }
     return b;
 }
 
@@ -328,10 +351,19 @@ rkvc_buffer *rkvc_buffer_ref(rkvc_buffer *buf)
 static void buffer_free(rkvc_buffer *b)
 {
     if (b->kind == RKVC_BUF_VIDEO) {
-        if (b->owns_avframe && b->av_frame)
+        int close_fd = -1;
+        if (b->owns_avframe && b->av_frame) {
+            /*
+             * RKMPP DRM 帧的 fd 由 AVFrame/MPP 池管理，av_frame_free 会归还；
+             * 仅对 dma-heap 自分配缓冲（NV12 等）在释放后 close fd。
+             */
+            if (b->mem_type == RKVC_MEM_DMABUF && b->fd >= 0 &&
+                b->av_frame->format != AV_PIX_FMT_DRM_PRIME)
+                close_fd = b->fd;
             av_frame_free(&b->av_frame);
-        if (b->fd >= 0 && b->mem_type == RKVC_MEM_DMABUF && b->owns_avframe)
-            close(b->fd);
+            if (close_fd >= 0)
+                close(close_fd);
+        }
     } else if (b->kind == RKVC_BUF_BITSTREAM) {
         if (b->owns_data)
             rkvc_free(b->data);
@@ -413,5 +445,69 @@ rkvc_err rkvc_buffer_set_pts(rkvc_buffer *buf, int64_t pts)
     buf->pts = pts;
     if (buf->av_frame)
         buf->av_frame->pts = pts;
+    return RKVC_OK;
+}
+
+rkvc_err rkvc_buffer_dmabuf_begin_cpu_read(const rkvc_buffer *buf)
+{
+    if (!buf || buf->kind != RKVC_BUF_VIDEO)
+        return RKVC_ERR_INVALID;
+    if (buf->mem_type != RKVC_MEM_DMABUF || buf->fd < 0)
+        return RKVC_OK;
+#ifdef __linux__
+    struct dma_buf_sync sync = {
+        .flags = DMA_BUF_SYNC_START | DMA_BUF_SYNC_READ,
+    };
+    if (ioctl(buf->fd, DMA_BUF_IOCTL_SYNC, &sync) < 0)
+        return RKVC_ERR_IO;
+#endif
+    return RKVC_OK;
+}
+
+rkvc_err rkvc_buffer_dmabuf_end_cpu_read(const rkvc_buffer *buf)
+{
+    if (!buf || buf->kind != RKVC_BUF_VIDEO)
+        return RKVC_ERR_INVALID;
+    if (buf->mem_type != RKVC_MEM_DMABUF || buf->fd < 0)
+        return RKVC_OK;
+#ifdef __linux__
+    struct dma_buf_sync sync = {
+        .flags = DMA_BUF_SYNC_END | DMA_BUF_SYNC_READ,
+    };
+    if (ioctl(buf->fd, DMA_BUF_IOCTL_SYNC, &sync) < 0)
+        return RKVC_ERR_IO;
+#endif
+    return RKVC_OK;
+}
+
+rkvc_err rkvc_buffer_dmabuf_begin_device_write(const rkvc_buffer *buf)
+{
+    if (!buf || buf->kind != RKVC_BUF_VIDEO)
+        return RKVC_ERR_INVALID;
+    if (buf->mem_type != RKVC_MEM_DMABUF || buf->fd < 0)
+        return RKVC_OK;
+#ifdef __linux__
+    struct dma_buf_sync sync = {
+        .flags = DMA_BUF_SYNC_START | DMA_BUF_SYNC_WRITE,
+    };
+    if (ioctl(buf->fd, DMA_BUF_IOCTL_SYNC, &sync) < 0)
+        return RKVC_ERR_IO;
+#endif
+    return RKVC_OK;
+}
+
+rkvc_err rkvc_buffer_dmabuf_end_device_write(const rkvc_buffer *buf)
+{
+    if (!buf || buf->kind != RKVC_BUF_VIDEO)
+        return RKVC_ERR_INVALID;
+    if (buf->mem_type != RKVC_MEM_DMABUF || buf->fd < 0)
+        return RKVC_OK;
+#ifdef __linux__
+    struct dma_buf_sync sync = {
+        .flags = DMA_BUF_SYNC_END | DMA_BUF_SYNC_WRITE,
+    };
+    if (ioctl(buf->fd, DMA_BUF_IOCTL_SYNC, &sync) < 0)
+        return RKVC_ERR_IO;
+#endif
     return RKVC_OK;
 }

@@ -198,39 +198,25 @@ rkvc_err rkvc_mpp_dec_receive_frame(rkvc_mpp_dec *dec, rkvc_buffer **out)
         return rkvc_from_averror(ret);
     }
 
-    if (frame->format == AV_PIX_FMT_DRM_PRIME &&
-        dec->output_format == RKVC_PIX_FMT_NV12) {
-        AVFrame *sw = av_frame_alloc();
-        if (!sw) {
-            av_frame_free(&frame);
-            return RKVC_ERR_NOMEM;
-        }
-        sw->format = AV_PIX_FMT_NV12;
-        ret = av_hwframe_transfer_data(sw, frame, 0);
-        av_frame_free(&frame);
-        if (ret < 0) {
-            av_frame_free(&sw);
-            return rkvc_from_averror(ret);
-        }
-        frame = sw;
-    } else if (frame->format == AV_PIX_FMT_DRM_PRIME) {
-        rkvc_buffer *dma = rkvc_buffer_from_drm_frame(frame);
-        if (dma && dec->output_format == RKVC_PIX_FMT_NV12) {
+    if (frame->format == AV_PIX_FMT_DRM_PRIME) {
+        rkvc_buffer *dma = NULL;
+        if (dec->output_format == RKVC_PIX_FMT_NV12)
+            dma = rkvc_buffer_from_drm_frame(frame);
+        if (dma) {
             dma->pts = frame->pts;
             *out = dma;
             return RKVC_OK;
         }
+        rkvc_buffer_unref(dma);
 
         AVFrame *sw = av_frame_alloc();
         if (!sw) {
-            rkvc_buffer_unref(dma);
             av_frame_free(&frame);
             return RKVC_ERR_NOMEM;
         }
         sw->format = AV_PIX_FMT_NV12;
         ret = av_hwframe_transfer_data(sw, frame, 0);
         av_frame_free(&frame);
-        rkvc_buffer_unref(dma);
         if (ret < 0) {
             av_frame_free(&sw);
             return rkvc_from_averror(ret);

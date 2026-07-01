@@ -214,7 +214,19 @@ rkvc_err rkvc_post_upscale_buffer(const rkvc_buffer *src, rkvc_buffer **dst,
 const char *rkvc_upscale_algo_name(rkvc_upscale_algo algo);
 int rkvc_upscale_algo_from_name(const char *name, rkvc_upscale_algo *out);
 rkvc_err rkvc_dma_to_host(const rkvc_buffer *src, rkvc_buffer **dst);
+rkvc_err rkvc_buffer_dmabuf_begin_cpu_read(const rkvc_buffer *buf);
+rkvc_err rkvc_buffer_dmabuf_end_cpu_read(const rkvc_buffer *buf);
+rkvc_err rkvc_buffer_dmabuf_begin_device_write(const rkvc_buffer *buf);
+rkvc_err rkvc_buffer_dmabuf_end_device_write(const rkvc_buffer *buf);
 int rkvc_rga_available(void);
+
+typedef struct rkvc_rga_scale_ctx rkvc_rga_scale_ctx;
+rkvc_rga_scale_ctx *rkvc_rga_scale_ctx_create(int dst_w, int dst_h,
+                                              rkvc_upscale_algo algo);
+void rkvc_rga_scale_ctx_destroy(rkvc_rga_scale_ctx *ctx);
+rkvc_err rkvc_rga_scale_ctx_process(rkvc_rga_scale_ctx *ctx,
+                                    const rkvc_buffer *src,
+                                    rkvc_buffer **out);
 
 /* ── Session ──────────────────────────────────────────────────────── */
 
@@ -237,6 +249,7 @@ struct rkvc_session {
     rkvc_mpp_dec         *dec;
     rkvc_mpp_enc         *enc;
     rkvc_svt_enc         *svt;
+    rkvc_rga_scale_ctx   *rga_scale;
 
     rkvc_session_stats    stats;
     int64_t               first_ts_us;
