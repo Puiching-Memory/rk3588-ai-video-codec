@@ -2,6 +2,7 @@
 # bench/run_rd_benchmark.sh — RK3588 端到端 RD 基准（集成于 rkvc 项目）
 #
 # 对比路线（默认）: h264 / h265 / svt-av1 / rkvc-v2 / post-upscale
+# 实验路线（搁置）: svt-av1+superres — AV1 内建 superres，见 bench/README.md
 #
 # 用法:
 #   ./scripts/run-bench.sh [源视频.mp4]
@@ -31,6 +32,14 @@ IFS=',' read -ra BITRATES <<< "$TARGET_KBPS"
 SVT_PRESET="${SVT_PRESET:-11}"
 # SVT RD 扫点模式：calibrated=CRF/CQP 校准表（actual≈target）；vbr=旧版 --rc 1 --tbr
 SVT_RD_MODE="${SVT_RD_MODE:-calibrated}"
+# AV1 内建 superres（SVT-AV1）：mode 0=off 1=fixed 2=random 3=qthresh 4=auto
+SVT_SUPERRES_MODE="${SVT_SUPERRES_MODE:-4}"
+SVT_SUPERRES_DENOM="${SVT_SUPERRES_DENOM:-9}"
+SVT_SUPERRES_KF_DENOM="${SVT_SUPERRES_KF_DENOM:-$SVT_SUPERRES_DENOM}"
+SVT_SUPERRES_QTHRES="${SVT_SUPERRES_QTHRES:-48}"
+SVT_SUPERRES_KF_QTHRES="${SVT_SUPERRES_KF_QTHRES:-$SVT_SUPERRES_QTHRES}"
+# superres 码流 av1_rkmpp 硬解会崩溃，默认用系统 ffmpeg + libaom-av1 软解
+SVT_SUPERRES_FFMPEG="${SVT_SUPERRES_FFMPEG:-/usr/bin/ffmpeg}"
 ENC_SCALE_DENOM="${ENC_SCALE_DENOM:-2}"
 UPSCALE_ALGOS="${UPSCALE_ALGOS:-nearest,bilinear,bicubic}"
 RUN_CODECS="${RUN_CODECS:-h264,h265,svt-av1,rkvc-v2}"
@@ -129,6 +138,10 @@ usage() {
   CLIP_START_SEC 显式起点秒数（设置后覆盖 CLIP_OFFSET）
   TARGET_KBPS    目标码率点，逗号分隔 kbps（默认 50,100,150,200,300,400,500,600,700,800,900,1000）
   SVT_RD_MODE    SVT-AV1 RD 扫点：calibrated（默认，CRF/CQP 表）或 vbr（--rc 1 --tbr）
+  SVT_SUPERRES_MODE   AV1 内建 superres 模式（默认 4=auto；1=fixed 3=qthresh）
+  SVT_SUPERRES_DENOM  superres 分母 9~16（默认 9，即水平 8/9；16=水平 1/2）
+  SVT_SUPERRES_QTHRES superres QP 阈值（mode=3 时，默认 48）
+  SVT_SUPERRES_FFMPEG  superres 解码用 ffmpeg（默认 /usr/bin/ffmpeg libaom-av1 软解；av1_rkmpp 暂不可用）
   RKVC_BUILD     rkvc 构建目录（默认 $PROJECT_ROOT/build）
   PLOT_ONLY=1    仅根据已有 CSV 绘图
   RAMDISK_DIR    中间帧/码流缓存（默认 /dev/shm/rkvc-bench，不落盘 eMMC）
@@ -606,6 +619,36 @@ svt_lo_encode_args() {
     printf '%s\n' --rc 0 --aq-mode 0 --qp "$qp"
 }
 
+svt_superres_codec_name() {
+    echo "svt-av1+superres"
+}
+
+svt_superres_mode_label() {
+    case "${SVT_SUPERRES_MODE:-4}" in
+        1) echo "fixed/${SVT_SUPERRES_DENOM}" ;;
+        3) echo "qthresh" ;;
+        4) echo "auto" ;;
+        *) echo "mode${SVT_SUPERRES_MODE}" ;;
+    esac
+}
+
+svt_superres_cli_args() {
+    printf '%s\n' \
+        --superres-mode "$SVT_SUPERRES_MODE" \
+        --superres-denom "$SVT_SUPERRES_DENOM" \
+        --superres-kf-denom "$SVT_SUPERRES_KF_DENOM" \
+        --superres-qthres "$SVT_SUPERRES_QTHRES" \
+        --superres-kf-qthres "$SVT_SUPERRES_KF_QTHRES"
+}
+
+svt_superres_encode_args() {
+    local kbps="$1"
+    local -a base superres
+    mapfile -t base < <(svt_full_encode_args "$kbps")
+    mapfile -t superres < <(svt_superres_cli_args)
+    printf '%s\n' "${base[@]}" "${superres[@]}"
+}
+
 # 全分辨率 1080p @ locomotion 4s middle CQP（h264_rkmpp qp≤51，复杂片段 floor ~650kbps）
 h264_qp_for_target() {
     case "$1" in
@@ -714,6 +757,19 @@ ffmpeg_to_yuv420p_raw() {
 
     dec=$(ffmpeg_rkmpp_decoder_for_file "$input")
     "$FFMPEG" -y -c:v "$dec" -i "$input" -pix_fmt yuv420p \
+        "$@" -f rawvideo "$out_yuv" 2>>"$log"
+}
+
+# superres 码流：av1_rkmpp hwdownload 会因 stride/width 不一致崩溃，暂用软解。
+ffmpeg_superres_to_yuv420p_raw() {
+    local input="$1" out_yuv="$2" log="$3"
+    shift 3
+    local ff="${SVT_SUPERRES_FFMPEG:-/usr/bin/ffmpeg}"
+    if [[ ! -x "$ff" ]]; then
+        echo "[error] superres 解码需要 $ff（libaom-av1），或设置 SVT_SUPERRES_FFMPEG" >&2
+        return 1
+    fi
+    "$ff" -y -c:v libaom-av1 -i "$input" -pix_fmt yuv420p \
         "$@" -f rawvideo "$out_yuv" 2>>"$log"
 }
 
@@ -891,6 +947,37 @@ run_svt_av1() {
     q=$(measure_quality_yuv "$decoded_yuv" "$REF_YUV_RAM" "$FRAMES" "$stats" "$FPS_NUM" "$FPS_DEN")
     bench_cleanup_ramdir "$ramdir"
     write_csv_row "$CSV" "svt-av1" "$kbps" "$br" "$q" "$t0" "$t1" "$t2"
+}
+
+run_svt_av1_superres() {
+    local kbps="$1"
+    local csv_codec
+    csv_codec=$(svt_superres_codec_name)
+    local ramdir logdir
+    ramdir=$(bench_ramdir "$csv_codec" "$kbps")
+    logdir=$(bench_logdir "$csv_codec" "$kbps")
+    mkdir -p "$ramdir" "$logdir"
+    if [[ ! -x "$SVT_ENC" ]]; then
+        echo "[skip] SVT-AV1 未构建: $SVT_ENC (运行 ./scripts/build-svt.sh)"
+        return 0
+    fi
+    local bitstream="$ramdir/stream.ivf"
+    local decoded_yuv="$ramdir/decoded.yuv" stats="$logdir/stats"
+    local -a svt_args
+    mapfile -t svt_args < <(svt_superres_encode_args "$kbps")
+    echo "[run] ${csv_codec} @ ${kbps}kbps (superres $(svt_superres_mode_label), preset ${SVT_PRESET}, mode ${SVT_RD_MODE})"
+    echo "[warn] svt-av1+superres 为实验路线（搁置）；解码走 ${SVT_SUPERRES_FFMPEG:-/usr/bin/ffmpeg} libaom-av1 软解" >&2
+    local t0 t1 t2 br q
+    t0=$(date +%s.%N)
+    "$SVT_ENC" --input "$REF_Y4M_RAM" -b "$bitstream" --preset "$SVT_PRESET" \
+        "${svt_args[@]}" --keyint 60 --lp 4 -n "$FRAMES" 2>"$logdir/enc.log" || return 1
+    t1=$(date +%s.%N)
+    ffmpeg_superres_to_yuv420p_raw "$bitstream" "$decoded_yuv" "$logdir/dec.log" -frames:v "$FRAMES" || return 1
+    t2=$(date +%s.%N)
+    br=$(actual_kbps "$bitstream" "$FRAMES")
+    q=$(measure_quality_yuv "$decoded_yuv" "$REF_YUV_RAM" "$FRAMES" "$stats" "$FPS_NUM" "$FPS_DEN")
+    bench_cleanup_ramdir "$ramdir"
+    write_csv_row "$CSV" "$csv_codec" "$kbps" "$br" "$q" "$t0" "$t1" "$t2"
 }
 
 run_rkmpp_post_upscale() {
@@ -1101,6 +1188,10 @@ codec_enabled() {
     [[ ",$RUN_CODECS," == *",$1,"* ]]
 }
 
+superres_enabled() {
+    codec_enabled svt-av1+superres || codec_enabled svt-av1-superres
+}
+
 rkvc_policy_enabled() {
     [[ ",$RKVC_POLICIES," == *",$1,"* ]]
 }
@@ -1141,13 +1232,16 @@ echo "[info] ffmpeg:  $FFMPEG"
 echo "[info] clip: ${CLIP_SEC}s @ ${CLIP_START}s (${FRAMES} frames, ${WIDTH}x${HEIGHT}, offset=${CLIP_OFFSET})"
 echo "[info] bitrates: ${BITRATES[*]} kbps (TARGET_KBPS)"
 echo "[info] svt rd mode: $SVT_RD_MODE (calibrated=CRF/CQP, vbr=--rc 1 --tbr)"
+if superres_enabled; then
+    echo "[info] svt superres: mode=${SVT_SUPERRES_MODE} denom=${SVT_SUPERRES_DENOM} qthres=${SVT_SUPERRES_QTHRES}"
+fi
 echo "[info] codecs: $RUN_CODECS"
 echo "[info] enc scale denom: $ENC_SCALE_DENOM  upscale algos: $UPSCALE_ALGOS"
 echo "[info] rkvc policies: $RKVC_POLICIES"
 echo "[info] rkvc: $RKVC_TRANS"
 echo "[info] ramdisk: $RAMDISK_DIR (码流/YUV 中间文件 tmpfs)"
 
-for codec in h264 h265 svt-av1 rkvc-v2 rkvc-realtime rkvc-balanced rkvc-quality; do
+for codec in h264 h265 svt-av1 svt-av1+superres rkvc-v2 rkvc-realtime rkvc-balanced rkvc-quality; do
     codec_will_rerun "$codec" && rm -rf "$RAM_WORK_DIR/$codec"
 done
 if post_upscale_will_rerun; then
@@ -1221,6 +1315,7 @@ if [[ "$BENCH_PARALLEL" == "1" ]]; then
     codec_enabled h264 && { bench_codec run_h264_hw & pids+=($!); }
     codec_enabled h265 && { bench_codec run_h265_hw & pids+=($!); }
     codec_enabled svt-av1 && { bench_codec run_svt_av1 & pids+=($!); }
+    superres_enabled && { bench_codec run_svt_av1_superres & pids+=($!); }
     bench_rkvc_policies
     bench_post_upscale
     for pid in "${pids[@]}"; do wait "$pid"; done
@@ -1228,6 +1323,7 @@ else
     codec_enabled h264 && bench_codec run_h264_hw
     codec_enabled h265 && bench_codec run_h265_hw
     codec_enabled svt-av1 && bench_codec run_svt_av1
+    superres_enabled && bench_codec run_svt_av1_superres
     bench_rkvc_policies
     bench_post_upscale
 fi

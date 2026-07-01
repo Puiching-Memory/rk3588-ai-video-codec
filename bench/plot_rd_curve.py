@@ -26,6 +26,7 @@ CODEC_LABELS = {
     "h264": "H.264",
     "h265": "H.265",
     "svt-av1": "SVT-AV1",
+    "svt-av1+superres": "SVT-AV1 + superres (AV1 built-in)",
     "rkvc-realtime": "rkvc realtime (H.264)",
     "rkvc-balanced": "rkvc balanced (HEVC)",
     "rkvc-quality": "rkvc quality (AV1)",
@@ -36,6 +37,7 @@ CODEC_COLORS = {
     "h264": "#1f77b4",
     "h265": "#ff7f0e",
     "svt-av1": "#2ca02c",
+    "svt-av1+superres": "#006d2c",
     "rkvc-realtime": "#6baed6",
     "rkvc-balanced": "#fdae6b",
     "rkvc-quality": "#74c476",
@@ -83,6 +85,7 @@ CODEC_MARKERS = {
     "h264": "o",
     "h265": "s",
     "svt-av1": "^",
+    "svt-av1+superres": "h",
     "rkvc-realtime": "D",
     "rkvc-balanced": "v",
     "rkvc-quality": "P",
@@ -93,11 +96,25 @@ CODEC_ORDER = [
     "h264",
     "h265",
     "svt-av1",
+    "svt-av1+superres",
     "rkvc-realtime",
     "rkvc-balanced",
     "rkvc-quality",
     "rkvc-v2",
 ]
+
+
+def is_superres_variant(codec: str) -> bool:
+    return codec == "svt-av1+superres"
+
+
+def codec_linestyle(codec: str) -> str:
+    if is_superres_variant(codec) or is_upscale_group(codec):
+        return "--"
+    m = UPSCALE_CODEC_RE.match(codec)
+    if m:
+        return "--"
+    return "-"
 
 
 def is_post_upscale(codec: str) -> bool:
@@ -167,6 +184,7 @@ def codec_short_label(codec: str) -> str:
         "h264": "H.264",
         "h265": "H.265",
         "svt-av1": "SVT-AV1",
+        "svt-av1+superres": "SVT-AV1+SR",
         "rkvc-realtime": "rkvc RT",
         "rkvc-balanced": "rkvc Bal",
         "rkvc-quality": "rkvc Q",
@@ -372,6 +390,7 @@ def plot_rd(
                 color=color,
                 marker=codec_marker(codec),
                 linewidth=2,
+                linestyle=codec_linestyle(codec),
                 markersize=7,
                 clip_on=True,
             )
