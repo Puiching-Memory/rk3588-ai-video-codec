@@ -147,7 +147,8 @@ package() {
     rm -rf "$OUT_DIR/$PKG_NAME"
     mkdir -p "$OUT_DIR/$PKG_NAME"/{bin,lib,include/rkvc,share/pkgconfig,examples/bin,examples/src}
 
-    for tool in rkvc_encode rkvc_decode rkvc_info rkvc_bench rkvc_transcode; do
+    for tool in rkvc_encode rkvc_decode rkvc_info rkvc_bench rkvc_transcode \
+                rkvc_session_upscale rkvc_yuv_upscale; do
         [[ -f "$RKVC_BUILD/$tool" ]] && cp "$RKVC_BUILD/$tool" "$OUT_DIR/$PKG_NAME/bin/"
     done
 

@@ -452,6 +452,7 @@ if(RKVC_BUILD_TESTS)
             PRIVATE ${RKVC_RPATH_LINK_OPTIONS}
         )
         if(TEST_NAME STREQUAL "test_hardware")
+            target_sources(${TEST_NAME} PRIVATE tests/test_fixtures.c)
             # 拆成独立 CTest 用例，避免单次进程内连续压榨 MPP/RGA 驱动。
         else()
             add_test(NAME ${TEST_NAME} COMMAND ${TEST_NAME})
@@ -473,6 +474,8 @@ if(RKVC_BUILD_TESTS)
 
     set(RKVC_HW_TEST_CASES
         test_session_transcode_h264
+        test_session_transcode_balanced
+        test_session_transcode_quality
         test_session_decode_nv12
         test_session_encode_h264
         test_session_av1_storage

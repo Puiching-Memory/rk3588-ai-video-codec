@@ -117,7 +117,8 @@ rkvc_err rkvc_svt_enc_open(rkvc_svt_enc **out, const rkvc_svt_enc_config *cfg)
     enc->cfg.target_bit_rate        = (uint32_t)cfg->bitrate;
     switch (cfg->rc_mode) {
     case RKVC_RC_CBR:
-        enc->cfg.rate_control_mode = SVT_AV1_RC_MODE_CBR;
+        /* SVT 文件/转码为 random-access，CBR 会初始化失败；对齐为 VBR。 */
+        enc->cfg.rate_control_mode = SVT_AV1_RC_MODE_VBR;
         break;
     case RKVC_RC_CQP:
         enc->cfg.rate_control_mode = SVT_AV1_RC_MODE_CQP_OR_CRF;

@@ -97,7 +97,7 @@ ninja -C build -j4 package
 |------|------|
 | `scripts/package-portable.sh` | 从源码构建可移植包 |
 | `scripts/package-portable.sh --clean` | 清理重建 |
-| `scripts/test-portable.sh <dir>` | 测试可移植包（92 项） |
+| `scripts/test-portable.sh <dir>` | 测试可移植包（99 项） |
 | `scripts/build-svt.sh` | 构建 SVT-AV1 |
 | `scripts/rebuild-ffmpeg-rkmpp.sh` | 重建 ffmpeg-rockchip |
 | `<package>/test.sh` | 包内一键自测 |

@@ -81,12 +81,23 @@ int main(int argc, char **argv)
     rkvc_init();
     mkdir(o.output_dir, 0755);
 
+    static const struct {
+        rkvc_policy policy;
+        const char *label;
+    } routes[] = {
+        { RKVC_POLICY_REALTIME, "REALTIME (H.264)" },
+        { RKVC_POLICY_BALANCED, "BALANCED (HEVC)" },
+        { RKVC_POLICY_QUALITY,  "QUALITY (AV1)" },
+    };
+
+    int failed = 0;
     printf("rkvc v2 session E2E bench (input=%s)\n", o.input);
-    printf("  REALTIME (H.264): %.1f fps\n",
-           bench_policy(RKVC_POLICY_REALTIME, &o));
-    printf("  BALANCED (HEVC):  %.1f fps\n",
-           bench_policy(RKVC_POLICY_BALANCED, &o));
-    printf("  QUALITY (AV1):    %.1f fps\n",
-           bench_policy(RKVC_POLICY_QUALITY, &o));
-    return 0;
+    for (size_t i = 0; i < sizeof(routes) / sizeof(routes[0]); i++) {
+        double fps = bench_policy(routes[i].policy, &o);
+        printf("  %-18s %.1f fps\n", routes[i].label, fps);
+        if (fps < 0.0)
+            failed = 1;
+    }
+
+    return failed ? 1 : 0;
 }

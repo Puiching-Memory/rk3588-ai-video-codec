@@ -15,6 +15,7 @@
 #include <cmocka.h>
 #include "rkvc/rkvc.h"
 #include "test_support.h"
+#include "test_fixtures.h"
 
 /** mkstemp 要求 XXXXXX 在路径末尾；生成带后缀的空临时文件供 session 写入。 */
 static int test_mktemp_file(char *out_path, size_t out_sz,
@@ -41,8 +42,14 @@ static int test_mktemp_file(char *out_path, size_t out_sz,
 
 static const char *fixture_h264(void)
 {
-    const char *p = getenv("RKVC_TEST_INPUT_H264");
-    return p && p[0] ? p : "tests/fixtures/sample.h264.mp4";
+    const char *env = getenv("RKVC_TEST_INPUT_H264");
+    if (env && env[0])
+        return env;
+
+    const char *gen = rkvc_test_fixture_h264_mp4(640, 480, 10);
+    if (!gen)
+        return "tests/fixtures/sample.h264.mp4";
+    return gen;
 }
 
 static void skip_unless_hw(void)
@@ -57,6 +64,43 @@ static void skip_unless_hw(void)
         skip();
 }
 
+static void skip_unless_hevc(void)
+{
+    skip_unless_hw();
+    rkvc_caps caps;
+    rkvc_query_caps(&caps);
+    if (!caps.has_hevc_enc || !caps.has_hevc_dec)
+        skip();
+}
+
+static void skip_unless_av1(void)
+{
+    skip_unless_hw();
+    rkvc_caps caps;
+    rkvc_query_caps(&caps);
+    if (!caps.has_av1_enc || !caps.has_av1_dec)
+        skip();
+}
+
+static rkvc_err run_transcode(rkvc_policy policy, int w, int h,
+                              const char *input, const char *output)
+{
+    rkvc_pipeline_desc d;
+    rkvc_pipeline_from_template(RKVC_TEMPLATE_FILE_TRANSCODE, &d);
+    d.policy      = policy;
+    d.input_path  = input;
+    d.output_path = output;
+    d.width       = w;
+    d.height      = h;
+
+    rkvc_session *s = NULL;
+    if (rkvc_session_create(&d, &s) != RKVC_OK)
+        return RKVC_ERR_INTERNAL;
+    rkvc_err err = rkvc_session_run_file(s);
+    rkvc_session_destroy(s);
+    return err;
+}
+
 static void test_session_transcode_h264(void **state)
 {
     (void)state;
@@ -64,24 +108,41 @@ static void test_session_transcode_h264(void **state)
 
     char out[PATH_MAX];
     if (test_mktemp_file(out, sizeof(out), "/tmp/rkvc_v2_transcode_", ".mp4") != 0)
-        skip();
+        fail();
 
-    rkvc_pipeline_desc d;
-    rkvc_pipeline_from_template(RKVC_TEMPLATE_FILE_TRANSCODE, &d);
-    d.policy      = RKVC_POLICY_REALTIME;
-    d.input_path  = fixture_h264();
-    d.output_path = out;
-    d.width       = 1920;
-    d.height      = 1080;
-
-    rkvc_session *s = NULL;
-    assert_int_equal(rkvc_session_create(&d, &s), RKVC_OK);
-    rkvc_err err = rkvc_session_run_file(s);
-    rkvc_session_destroy(s);
+    rkvc_err err = run_transcode(RKVC_POLICY_REALTIME, 640, 480,
+                                 fixture_h264(), out);
     remove(out);
+    assert_int_equal(err, RKVC_OK);
+}
 
-    if (err == RKVC_ERR_IO || err == RKVC_ERR_NOT_FOUND)
-        skip();
+static void test_session_transcode_balanced(void **state)
+{
+    (void)state;
+    skip_unless_hevc();
+
+    char out[PATH_MAX];
+    if (test_mktemp_file(out, sizeof(out), "/tmp/rkvc_v2_trans_hevc_", ".mp4") != 0)
+        fail();
+
+    rkvc_err err = run_transcode(RKVC_POLICY_BALANCED, 640, 480,
+                                 fixture_h264(), out);
+    remove(out);
+    assert_int_equal(err, RKVC_OK);
+}
+
+static void test_session_transcode_quality(void **state)
+{
+    (void)state;
+    skip_unless_av1();
+
+    char out[PATH_MAX];
+    if (test_mktemp_file(out, sizeof(out), "/tmp/rkvc_v2_trans_av1_", ".mp4") != 0)
+        fail();
+
+    rkvc_err err = run_transcode(RKVC_POLICY_QUALITY, 640, 480,
+                                 fixture_h264(), out);
+    remove(out);
     assert_int_equal(err, RKVC_OK);
 }
 
@@ -92,7 +153,7 @@ static void test_session_decode_nv12(void **state)
 
     char out[PATH_MAX];
     if (test_mktemp_file(out, sizeof(out), "/tmp/rkvc_v2_decode_", ".nv12") != 0)
-        skip();
+        fail();
 
     rkvc_pipeline_desc d;
     rkvc_pipeline_from_template(RKVC_TEMPLATE_FILE_DECODE, &d);
@@ -104,8 +165,6 @@ static void test_session_decode_nv12(void **state)
     rkvc_err err = rkvc_session_run_file(s);
     rkvc_session_destroy(s);
     remove(out);
-    if (err == RKVC_ERR_IO || err == RKVC_ERR_NOT_FOUND)
-        skip();
     assert_int_equal(err, RKVC_OK);
 }
 
@@ -116,16 +175,20 @@ static void test_session_encode_h264(void **state)
 
     const char *raw = getenv("RKVC_TEST_RAW_NV12");
     if (!raw || !raw[0])
-        skip();
+        raw = rkvc_test_fixture_nv12_1080p();
+    if (!raw)
+        fail();
 
     char out[PATH_MAX];
     if (test_mktemp_file(out, sizeof(out), "/tmp/rkvc_v2_encode_", ".mp4") != 0)
-        skip();
+        fail();
 
     rkvc_pipeline_desc d;
     rkvc_pipeline_from_template(RKVC_TEMPLATE_FILE_ENCODE, &d);
     d.input_path  = raw;
     d.output_path = out;
+    d.width       = 1920;
+    d.height      = 1080;
     d.policy      = RKVC_POLICY_REALTIME;
 
     rkvc_session *s = NULL;
@@ -139,32 +202,25 @@ static void test_session_encode_h264(void **state)
 static void test_session_av1_storage(void **state)
 {
     (void)state;
-    if (!rkvc_test_hardware_opted_in())
-        skip();
-    rkvc_init();
-
-    rkvc_caps caps;
-    rkvc_query_caps(&caps);
-    if (!caps.has_av1_dec)
-        skip();
+    skip_unless_av1();
 
     char out[PATH_MAX];
     if (test_mktemp_file(out, sizeof(out), "/tmp/rkvc_v2_av1_", ".mp4") != 0)
-        skip();
+        fail();
 
     rkvc_pipeline_desc d;
     rkvc_pipeline_from_template(RKVC_TEMPLATE_AV1_STORAGE, &d);
     d.input_path  = fixture_h264();
     d.output_path = out;
+    d.width       = 640;
+    d.height      = 480;
 
     rkvc_session *s = NULL;
     rkvc_session_create(&d, &s);
     rkvc_err err = rkvc_session_run_file(s);
     rkvc_session_destroy(s);
     remove(out);
-    if (err == RKVC_ERR_IO || err == RKVC_ERR_NOT_FOUND)
-        skip();
-    assert_true(err == RKVC_OK || err == RKVC_ERR_NOT_FOUND);
+    assert_int_equal(err, RKVC_OK);
 }
 
 static void test_session_encode_decode_upscale_3x(void **state)
@@ -179,15 +235,17 @@ static void test_session_encode_decode_upscale_3x(void **state)
 
     const char *raw = getenv("RKVC_TEST_RAW_NV12");
     if (!raw || !raw[0])
-        skip();
+        raw = rkvc_test_fixture_nv12_1080p();
+    if (!raw)
+        fail();
 
     char enc_path[PATH_MAX];
     char dec_path[PATH_MAX];
     if (test_mktemp_file(enc_path, sizeof(enc_path), "/tmp/rkvc_v2_enc3x_", ".mp4") != 0)
-        skip();
+        fail();
     if (test_mktemp_file(dec_path, sizeof(dec_path), "/tmp/rkvc_v2_dec3x_", ".nv12") != 0) {
         remove(enc_path);
-        skip();
+        fail();
     }
 
     rkvc_pipeline_desc enc = {0};
@@ -227,15 +285,20 @@ static void test_session_encode_decode_upscale_3x(void **state)
     remove(dec_path);
 }
 
+static const struct CMUnitTest tests[] = {
+    cmocka_unit_test(test_session_transcode_h264),
+    cmocka_unit_test(test_session_transcode_balanced),
+    cmocka_unit_test(test_session_transcode_quality),
+    cmocka_unit_test(test_session_decode_nv12),
+    cmocka_unit_test(test_session_encode_h264),
+    cmocka_unit_test(test_session_av1_storage),
+    cmocka_unit_test(test_session_encode_decode_upscale_3x),
+};
+
 int main(int argc, char **argv)
 {
-    static const struct CMUnitTest tests[] = {
-        cmocka_unit_test(test_session_transcode_h264),
-        cmocka_unit_test(test_session_decode_nv12),
-        cmocka_unit_test(test_session_encode_h264),
-        cmocka_unit_test(test_session_av1_storage),
-        cmocka_unit_test(test_session_encode_decode_upscale_3x),
-    };
+    if (!rkvc_test_hardware_opted_in())
+        return RKVC_CTEST_SKIP;
 
     if (argc > 1) {
         for (size_t i = 0; tests[i].test_func != NULL; i++) {

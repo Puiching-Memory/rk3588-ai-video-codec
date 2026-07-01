@@ -130,7 +130,7 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y -qq \
-            cmake ninja-build patchelf libdrm-dev
+            cmake ninja-build patchelf libdrm-dev gcc pkg-config
 
       - name: Install librga
         run: |
@@ -163,6 +163,12 @@ jobs:
         run: |
           cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DMPP_BUILD_DIR=/tmp/mpp-build
           ninja -C build package
+
+      - name: Build portable package
+        run: ./scripts/package-portable.sh
+
+      - name: Test portable package
+        run: ./scripts/test-portable.sh build/portable/rkvc-0.2.0-linux-aarch64-portable
 
       - name: Upload packages
         uses: actions/upload-artifact@v7

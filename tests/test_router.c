@@ -52,6 +52,21 @@ static void test_forced_codec(void **state)
     assert_string_equal(plan.enc_name, "h264_rkmpp");
 }
 
+static void test_balanced_high_fps_1080p_downgrades_h264(void **state)
+{
+    (void)state;
+    rkvc_pipeline_desc d = rkvc_pipeline_desc_defaults();
+    d.policy  = RKVC_POLICY_BALANCED;
+    d.width   = 1920;
+    d.height  = 1080;
+    d.fps_num = 60;
+    d.fps_den = 1;
+    rkvc_route_plan plan;
+    assert_int_equal(rkvc_route_resolve(&d, &plan), RKVC_OK);
+    assert_int_equal(plan.codec, RKVC_CODEC_H264);
+    assert_string_equal(plan.enc_name, "h264_rkmpp");
+}
+
 int main(void)
 {
     const struct CMUnitTest tests[] = {
@@ -59,6 +74,7 @@ int main(void)
         cmocka_unit_test(test_balanced_routes_hevc),
         cmocka_unit_test(test_quality_routes_av1),
         cmocka_unit_test(test_forced_codec),
+        cmocka_unit_test(test_balanced_high_fps_1080p_downgrades_h264),
     };
     return cmocka_run_group_tests(tests, NULL, NULL);
 }

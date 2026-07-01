@@ -23,7 +23,7 @@
 | RGA 缩放 | `tests/test_scale.c` | 参数/布局始终运行；RGA 用例需硬件标志 |
 | RGA 推广门禁 | `scripts/test-rga.sh` | 1080p↔360p、padding 源、post_upscale、soak；需 `/dev/rga` |
 | CLI 脚本 | `tests/test_cli_args.sh` | CLI 参数错误（`full-tests` preset） |
-| 可移植包 | `scripts/test-portable.sh` | 包完整性、RPATH、编解码、pkg-config（92 项） |
+| 可移植包 | `scripts/test-portable.sh` | 包完整性、RPATH、三策略 bench、后处理上采样、pkg-config（99 项） |
 | 动态分析 | `asan` preset | ASan + UBSan |
 | 覆盖率 | `coverage` preset | gcov instrumentation |
 | 严格门禁 | `scripts/test-strict.sh` | 顺序执行 tests / asan / coverage |
@@ -34,10 +34,10 @@
 
 | preset | CTest 目标数 | 说明 |
 |--------|-------------|------|
-| `tests` | 14 | 9 个单元测试 + 5 个硬件子用例 |
-| `full-tests` | 15 | 上述 + `test_cli_args` + `test_bench_permission_failure` |
+| `tests` | 16 | 9 个单元测试 + 7 个硬件子用例 |
+| `full-tests` | 17 | 上述 + `test_cli_args` + `test_bench_permission_failure` |
 
-硬件测试拆为 5 个独立 CTest 用例（含 `test_session_encode_decode_upscale_3x`），每个在单独进程中执行，避免拖垮 MPP/RGA 驱动。3× 回归需设置 `RKVC_TEST_RAW_NV12`（1080p NV12 raw）。
+硬件测试拆为 7 个独立 CTest 用例（含三策略转码与 3× 上采样），未设置 `RKVC_RUN_HARDWARE_TESTS=1` 时 **exit 77（Skipped）**；设置后夹具自生成，无需 `tests/fixtures/` 内嵌文件。
 
 ## 执行命令
 
@@ -83,7 +83,7 @@ RKVC_COVERAGE_MIN_LINE=80 RKVC_COVERAGE_MIN_BRANCH=70 ./scripts/test-strict.sh
 ## 交付前最低要求
 
 - `./scripts/test-strict.sh` 全部通过
-- 可移植包通过 `./scripts/test-portable.sh <package-dir>`（92 项）
+- 可移植包通过 `./scripts/test-portable.sh <package-dir>`（99 项）
 - RK3588 实机完成固定样本编码、解码、转码与长时间 soak test
 - 新缺陷附带回归测试
 

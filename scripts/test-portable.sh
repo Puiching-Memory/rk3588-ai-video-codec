@@ -173,7 +173,8 @@ echo ""
 
 # 1. 文件完整性
 echo "--- 文件完整性 ---"
-for f in bin/rkvc_encode bin/rkvc_decode bin/rkvc_info bin/rkvc_bench bin/rkvc_transcode; do
+for f in bin/rkvc_encode bin/rkvc_decode bin/rkvc_info bin/rkvc_bench bin/rkvc_transcode \
+         bin/rkvc_session_upscale bin/rkvc_yuv_upscale; do
     if [ -x "$PKG_DIR/$f" ]; then
         pass "存在且可执行: $f"
     elif [ -e "$PKG_DIR/$f" ]; then
@@ -391,12 +392,36 @@ fi
 if [ -f "$TMPDIR/test.mp4" ]; then
     capture_run bench_status bench_out env LD_LIBRARY_PATH="$PKG_DIR/lib" "$PKG_DIR/bin/rkvc_bench" \
         -i "$TMPDIR/test.mp4" -o "$TMPDIR/bench" -s 640x480
-    if [ "$bench_status" -eq 0 ] && echo "$bench_out" | grep -q "REALTIME"; then
-        pass "rkvc_bench session E2E 短测"
+    bench_ok=0
+    if [ "$bench_status" -eq 0 ] && \
+       echo "$bench_out" | grep -qE 'REALTIME \(H\.264\)[[:space:]]+[0-9]+\.[0-9]+ fps' && \
+       echo "$bench_out" | grep -qE 'BALANCED \(HEVC\)[[:space:]]+[0-9]+\.[0-9]+ fps' && \
+       echo "$bench_out" | grep -qE 'QUALITY \(AV1\)[[:space:]]+[0-9]+\.[0-9]+ fps' && \
+       ! echo "$bench_out" | grep -q '\-1\.0 fps'; then
+        bench_ok=1
+    fi
+    if [ "$bench_ok" -eq 1 ]; then
+        pass "rkvc_bench session E2E 三策略短测"
     else
-        fail "rkvc_bench session E2E 短测失败 (exit=$bench_status)"
+        fail "rkvc_bench session E2E 三策略短测失败 (exit=$bench_status)"
         echo "  命令: $PKG_DIR/bin/rkvc_bench -i $TMPDIR/test.mp4 -o $TMPDIR/bench -s 640x480"
         show_output "rkvc_bench" "$bench_out"
+    fi
+fi
+
+if [ -x "$PKG_DIR/bin/rkvc_session_upscale" ] && [ -f "$TMPDIR/test.mp4" ]; then
+    capture_run up_status up_out env LD_LIBRARY_PATH="$PKG_DIR/lib" \
+        "$PKG_DIR/bin/rkvc_session_upscale" \
+        -i "$TMPDIR/test.mp4" -o "$TMPDIR/upscaled.nv12" \
+        --width 640 --height 480 --enc-scale-denom 2 --post-upscale bilinear
+    up_frame=$((640 * 480 * 3 / 2))
+    up_size=0
+    [ -f "$TMPDIR/upscaled.nv12" ] && up_size=$(file_size "$TMPDIR/upscaled.nv12")
+    if [ "$up_status" -eq 0 ] && [ "$up_size" -ge "$up_frame" ]; then
+        pass "rkvc_session_upscale 2× 后处理上采样"
+    else
+        fail "rkvc_session_upscale 后处理上采样失败 (exit=$up_status, size=$up_size)"
+        show_output "rkvc_session_upscale" "$up_out"
     fi
 fi
 
