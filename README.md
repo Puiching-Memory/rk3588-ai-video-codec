@@ -35,6 +35,10 @@ cmake --build build -j4
 
 端到端码率-画质与性能对比，默认四路：**H.264 / H.265 / SVT-AV1 / rkvc v2**。
 
+![RD 曲线（1080p E2E）](docs/images/bench/rd_curve_e2e.png)
+
+![E2E 性能对比](docs/images/bench/perf_e2e.png)
+
 ```bash
 ./scripts/run-bench.sh /path/to/1080p.mp4
 PLOT_ONLY=1 ./scripts/run-bench.sh          # 仅重绘图表
